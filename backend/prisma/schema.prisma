@@ -33,6 +33,7 @@ model Agent {
 
   state           AgentState?
   actions         Action[]
+  events          Event[]
   relationships   Relationship[] @relation("agent_relationships")
   relationships2  Relationship[] @relation("agent_target_relationships")
   sent_messages   ChatMessage[] @relation("message_sender")
@@ -44,7 +45,7 @@ model Agent {
 model AgentState {
   id              String   @id @default(cuid())
   agent_id        String   @unique
-  agent           Agent    @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+  agent           Agent    @relation(fields: [agent_id], references: [agent_id], onDelete: Cascade)
 
   location_id     String
   location        Location @relation(fields: [location_id], references: [id])
@@ -93,7 +94,7 @@ model Location {
 model Action {
   id              String   @id @default(cuid())
   agent_id        String
-  agent           Agent    @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+  agent           Agent    @relation(fields: [agent_id], references: [agent_id], onDelete: Cascade)
 
   action_type     String
   parameters      Json?
@@ -121,7 +122,7 @@ model Event {
   data            Json
 
   agent_id        String?
-  agent           Agent?   @relation(fields: [agent_id], references: [id], onDelete: SetNull)
+  agent           Agent?   @relation(fields: [agent_id], references: [agent_id], onDelete: SetNull)
 
   delivered       Boolean  @default(false)
   delivered_at    DateTime?
@@ -136,10 +137,10 @@ model Event {
 model Relationship {
   id              String   @id @default(cuid())
   agent_id        String
-  agent           Agent    @relation("agent_relationships", fields: [agent_id], references: [id], onDelete: Cascade)
+  agent           Agent    @relation("agent_relationships", fields: [agent_id], references: [agent_id], onDelete: Cascade)
 
   target_agent_id String
-  target_agent    Agent    @relation("agent_target_relationships", fields: [target_agent_id], references: [id], onDelete: Cascade)
+  target_agent    Agent    @relation("agent_target_relationships", fields: [target_agent_id], references: [agent_id], onDelete: Cascade)
 
   relationship_type String @default("stranger")
   relationship_level Int  @default(0)
@@ -158,10 +159,10 @@ model Relationship {
 model ChatMessage {
   id              String   @id @default(cuid())
   sender_id       String
-  sender          Agent    @relation("message_sender", fields: [sender_id], references: [id], onDelete: Cascade)
+  sender          Agent    @relation("message_sender", fields: [sender_id], references: [agent_id], onDelete: Cascade)
 
   receiver_id     String
-  receiver        Agent    @relation("message_receiver", fields: [receiver_id], references: [id], onDelete: Cascade)
+  receiver        Agent    @relation("message_receiver", fields: [receiver_id], references: [agent_id], onDelete: Cascade)
 
   message         String
   message_type    String   @default("text")
@@ -181,10 +182,10 @@ model ChatMessage {
 model Transaction {
   id              String   @id @default(cuid())
   sender_id       String
-  sender          Agent    @relation("transaction_sender", fields: [sender_id], references: [id], onDelete: Cascade)
+  sender          Agent    @relation("transaction_sender", fields: [sender_id], references: [agent_id], onDelete: Cascade)
 
   receiver_id     String
-  receiver        Agent    @relation("transaction_receiver", fields: [receiver_id], references: [id], onDelete: Cascade)
+  receiver        Agent    @relation("transaction_receiver", fields: [receiver_id], references: [agent_id], onDelete: Cascade)
 
   amount          Decimal
   transaction_type String

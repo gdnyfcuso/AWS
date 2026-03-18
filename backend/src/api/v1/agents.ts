@@ -5,7 +5,6 @@ import { z } from 'zod';
 import { WorldEngine } from '../../core';
 import { agentManager } from '../../core/AgentManager';
 import { eventManager } from '../../core/EventManager';
-import { locationSystem } from '../../core/LocationSystem';
 import { authenticateApiKey, AuthenticatedRequest } from '../middleware/auth';
 import { ErrorCode } from '../../types';
 import { createLogger } from '../../utils/logger';
@@ -191,10 +190,14 @@ async function executeAction(
   const stateChanges: Record<string, unknown> = {};
   const eventsTriggered: Array<{ type: string; [key: string]: unknown }> = [];
 
+  // 从 WorldEngine 获取 locationSystem
+  const engine = getEngine();
+  const locationSystem = engine.getLocationSystem();
+
   try {
     switch (action) {
       case 'go_to_work': {
-        const officeLocation = await locationSystem.getLocation('office_tech_park');
+        const officeLocation = locationSystem.getLocation('office_tech_park');
 
         if (!officeLocation) {
           return {

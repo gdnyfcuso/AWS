@@ -217,3 +217,6 @@ export class LocationSystem {
     logger.info('Default locations initialized');
   }
 }
+
+// 导出单例实例
+export const locationSystem = new LocationSystem();

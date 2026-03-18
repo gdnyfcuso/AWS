@@ -5,7 +5,7 @@ import { getDatabase } from '../../services/database';
 import { ErrorCode, ErrorResponse } from '../../types';
 import { createLogger } from '../../utils/logger';
 
-const logger = createLogger('AuthMiddleware';
+const logger = createLogger('AuthMiddleware');
 
 export interface AuthenticatedRequest extends Request {
   agent?: {
