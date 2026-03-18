@@ -54,32 +54,46 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
   const [webGLError, setWebGLError] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [sceneReady, setSceneReady] = useState(false);
+  const [initAttempted, setInitAttempted] = useState(false);
 
   // 检查 WebGL 支持
   useEffect(() => {
-    const canvas = document.createElement('canvas');
-    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+    try {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
 
-    if (!gl) {
-      console.log('WebGL not supported');
+      if (!gl) {
+        setWebGLError(true);
+      }
+    } catch (e) {
       setWebGLError(true);
-    } else {
-      console.log('WebGL supported:', gl.getParameter(gl.VERSION));
     }
   }, []);
 
-  // 初始化 Three.js 场景
+  // 初始化 Three.js 场景 - 只运行一次
   useEffect(() => {
-    if (webGLError || !containerRef.current || sceneReady) return;
+    // 如果WebGL不支持，直接返回
+    if (webGLError) return;
+
+    // 如果已经初始化过，直接返回
+    if (sceneReady || initAttempted) return;
+
+    if (!containerRef.current) return;
+
+    setInitAttempted(true);
 
     try {
       const container = containerRef.current;
-      const width = container.offsetWidth;
-      const height = container.offsetHeight;
+      let width = container.offsetWidth;
+      let height = container.offsetHeight;
 
+      // 如果容器尺寸为0，等待DOM更新
       if (width === 0 || height === 0) {
-        console.log('Container not ready, retrying...');
-        const timer = setTimeout(() => setSceneReady(false), 100);
+        const timer = setTimeout(() => {
+          if (container.offsetWidth > 0 && container.offsetHeight > 0) {
+            setSceneReady(false); // 触发重新初始化
+          }
+        }, 100);
         return () => clearTimeout(timer);
       }
 
@@ -96,11 +110,16 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
       cameraRef.current = camera;
 
       // 创建渲染器
-      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      const renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: true,
+        powerPreference: 'high-performance'
+      });
       renderer.setSize(width, height);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.setClearColor(0x87CEEB, 1);
       container.appendChild(renderer.domElement);
       rendererRef.current = renderer;
 
@@ -141,6 +160,7 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
       ground.rotation.x = -Math.PI / 2;
       ground.receiveShadow = true;
       scene.add(ground);
+      console.log('Ground added');
 
       // 添加网格辅助线
       const gridHelper = new THREE.GridHelper(500, 50, 0x000000, 0x444444);
@@ -152,24 +172,23 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
       scene.add(agentMeshesRef.current);
 
       setSceneReady(true);
-      console.log('Three.js scene initialized');
 
     } catch (error) {
       console.error('Failed to initialize Three.js:', error);
       setWebGLError(true);
     }
 
-    // 清理
+    // 清理函数 - 只在组件真正卸载时执行
     return () => {
       if (rendererRef.current) {
         rendererRef.current.dispose();
-        if (containerRef.current && rendererRef.current.domElement) {
+        if (containerRef.current && rendererRef.current.domElement && containerRef.current.contains(rendererRef.current.domElement)) {
           containerRef.current.removeChild(rendererRef.current.domElement);
         }
         rendererRef.current = null;
       }
     };
-  }, [webGLError, sceneReady]);
+  }, []); // 空依赖数组，只运行一次
 
   // 更新 Agent 显示
   useEffect(() => {
@@ -491,11 +510,11 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
         <div>
           <h2 className="text-lg font-semibold text-gray-900">3D 虚拟空间</h2>
           <p className="text-xs text-gray-500 mt-1">
-            {agents.length} 个 Agent 在虚拟空间中活动
+            {agents.length} 个 Agent | {buildings.length} 个建筑
           </p>
         </div>
         <div className="text-xs text-gray-500">
-          {sceneReady ? '🖱️ 拖动鼠标旋转视角，滚轮缩放' : '正在加载...'}
+          {sceneReady ? '🖱️ 拖动旋转 | 滚轮缩放' : '⏳ 加载中...'}
         </div>
       </div>
 
@@ -505,9 +524,18 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
         className="relative w-full h-96 rounded-lg border border-gray-200 overflow-hidden"
         style={{ minHeight: '384px' }}
       >
-        {!sceneReady && (
-          <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
-            <p className="text-gray-500">正在加载 3D 场景...</p>
+        {!sceneReady && !webGLError && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-100 z-10">
+            <div className="w-8 h-8 border-2 border-world-400 border-t-transparent rounded-full animate-spin mb-3"></div>
+            <p className="text-gray-500">正在初始化 3D 场景...</p>
+          </div>
+        )}
+        {webGLError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-red-50 z-10">
+            <div className="text-center">
+              <p className="text-red-600 font-medium">WebGL 不可用</p>
+              <p className="text-sm text-gray-500 mt-1">请使用支持硬件加速的浏览器</p>
+            </div>
           </div>
         )}
       </div>

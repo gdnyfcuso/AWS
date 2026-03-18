@@ -55,22 +55,41 @@ export function Dashboard() {
       status: agent.status,
     }));
 
-  // 获取 3D 虚拟空间的建筑数据
-  const virtualBuildings = (locations || []).map(loc => ({
-    id: loc.id,
-    name: loc.name,
-    type: loc.type,
-    x: 0, // 使用默认坐标
+  // 调试：如果没有地理位置数据，使用所有Agent的数据
+  const displayAgents = virtualAgents.length > 0 ? virtualAgents : agents.map(a => ({
+    agent_id: a.agent_id,
+    agent_name: a.name || a.agent_name,
+    x: (Math.random() - 0.5) * 100, // 随机分布在空间中
     y: 0,
-    z: 0,
-    width: 30,
-    depth: 30,
-    height: 40 + Math.random() * 60,
-    color: loc.type === 'residential' ? '#4ade80' :
-           loc.type === 'office' ? '#60a5fa' :
-           loc.type === 'commercial' ? '#fbbf24' :
-           loc.type === 'park' ? '#34d399' : '#a78bfa',
+    z: (Math.random() - 0.5) * 100,
+    energy: a.state?.energy || 50,
+    mood: a.state?.mood || 'neutral',
+    status: a.status || 'online',
   }));
+
+  // 获取 3D 虚拟空间的建筑数据
+  const virtualBuildings = (locations || []).map((loc, index) => {
+    // 使用位置坐标，如果没有则按索引分布
+    const coords = loc.coordinates || { x: 0, y: 0, z: 0 };
+    const angle = (index / ((locations?.length || 1) || 1)) * Math.PI * 2;
+    const radius = 80;
+
+    return {
+      id: loc.id,
+      name: loc.name,
+      type: loc.type,
+      x: coords.x !== 0 ? coords.x : Math.cos(angle) * radius,
+      y: 0,
+      z: coords.z !== 0 ? coords.z : Math.sin(angle) * radius,
+      width: 30,
+      depth: 30,
+      height: 40 + Math.random() * 60,
+      color: loc.type === 'residential' ? '#4ade80' :
+             loc.type === 'office' ? '#60a5fa' :
+             loc.type === 'commercial' ? '#fbbf24' :
+             loc.type === 'park' ? '#34d399' : '#a78bfa',
+    };
+  });
 
   // 加载状态
   if (isLoading) {
@@ -167,7 +186,7 @@ export function Dashboard() {
 
           {viewMode === 'virtual-3d' && (
             <VirtualSpace3D
-              agents={virtualAgents}
+              agents={displayAgents}
               buildings={virtualBuildings}
               onAgentClick={handleVirtualAgentClick}
             />
