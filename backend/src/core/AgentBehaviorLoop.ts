@@ -8,6 +8,9 @@ import type { WebhookEvent, WorldTime } from '../types';
 
 const logger = createLogger('AgentBehaviorLoop');
 
+// 服务器URL，用于内部API调用
+const SERVER_URL = process.env.SERVER_URL || `http://${process.env.HOST || 'localhost'}:${process.env.PORT || '3000'}`;
+
 export interface BehaviorLoopConfig {
   interval: number; // 行为决策间隔（秒）
   enabled: boolean;
@@ -142,7 +145,7 @@ export class AgentBehaviorLoop {
       }
 
       // 通过 API 执行行动
-      const response = await fetch(`http://localhost:3000/api/v1/agents/${agentId}/action`, {
+      const response = await fetch(`${SERVER_URL}/api/v1/agents/${agentId}/action`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

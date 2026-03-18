@@ -34,6 +34,11 @@ model Agent {
   home_location_id String?
   home_location    Location?  @relation(fields: [home_location_id], references: [id])
 
+  // VWAP v2 新增字段
+  protocol_version String   @default("v1")
+  avatar_id       String?   @unique
+  platform_adapter String?  // 'openai' | 'claude' | 'discord' | 'telegram' | 'custom'
+
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
   disconnected_at DateTime?
@@ -47,6 +52,13 @@ model Agent {
   received_messages ChatMessage[] @relation("message_receiver")
   transactions    Transaction[] @relation("transaction_sender")
   transactions2   Transaction[] @relation("transaction_receiver")
+
+  // VWAP v2 关系
+  physiological_needs PhysiologicalNeeds?
+  emotional_state     EmotionalState?
+  skills              Skills?
+  avatar              Avatar?
+  platform_adapters   PlatformAdapter[]
 }
 
 model AgentState {
@@ -234,4 +246,114 @@ model SystemConfig {
   description     String?
 
   updated_at      DateTime @updatedAt
+}
+
+// ==================== VWAP v2 人类属性系统 ====================
+
+/// 生理需求表
+model PhysiologicalNeeds {
+  id              String   @id @default(cuid())
+  agent_id        String   @unique
+  agent           Agent    @relation(fields: [agent_id], references: [agent_id], onDelete: Cascade)
+
+  hunger          Int      @default(100)      // 0-100, 100 = 饱
+  thirst          Int      @default(100)      // 0-100, 100 = 不渴
+  fatigue         Int      @default(0)        // 0-100, 100 = 极度疲劳
+  bathroom        Int      @default(0)        // 0-100, 100 = 急需
+  comfort         Int      @default(50)       // 0-100, 舒适度
+  health          Int      @default(100)      // 0-100, 健康状况
+
+  last_updated    DateTime @default(now())
+
+  @@index([agent_id])
+}
+
+/// 情感状态表
+model EmotionalState {
+  id                String   @id @default(cuid())
+  agent_id          String   @unique
+  agent             Agent    @relation(fields: [agent_id], references: [agent_id], onDelete: Cascade)
+
+  primary_emotion   String   @default("neutral")
+  secondary_emotion String?
+  emotion_intensity Int      @default(50)
+  mood_stability    Int      @default(50)
+
+  // 情感影响因子
+  stress_level      Int      @default(0)
+  happiness_level   Int      @default(50)
+  social_energy     Int      @default(50)
+
+  // 情感历史（JSON存储，最多保留100条）
+  emotion_history   Json?
+
+  last_updated      DateTime @default(now())
+
+  @@index([agent_id])
+}
+
+/// 技能表
+model Skills {
+  id              String   @id @default(cuid())
+  agent_id        String   @unique
+  agent           Agent    @relation(fields: [agent_id], references: [agent_id], onDelete: Cascade)
+
+  // 技能数据存储为JSON，每个技能包含 level, experience, proficiency, potential
+  programming     Json     @default("{\"level\":1,\"experience\":0,\"proficiency\":\"novice\",\"potential\":50}")
+  cooking         Json     @default("{\"level\":1,\"experience\":0,\"proficiency\":\"novice\",\"potential\":50}")
+  social          Json     @default("{\"level\":1,\"experience\":0,\"proficiency\":\"novice\",\"potential\":50}")
+  creativity      Json     @default("{\"level\":1,\"experience\":0,\"proficiency\":\"novice\",\"potential\":50}")
+  logic           Json     @default("{\"level\":1,\"experience\":0,\"proficiency\":\"novice\",\"potential\":50}")
+  leadership      Json     @default("{\"level\":1,\"experience\":0,\"proficiency\":\"novice\",\"potential\":50}")
+  negotiation     Json     @default("{\"level\":1,\"experience\":0,\"proficiency\":\"novice\",\"potential\":50}")
+  art             Json     @default("{\"level\":1,\"experience\":0,\"proficiency\":\"novice\",\"potential\":50}")
+  music           Json     @default("{\"level\":1,\"experience\":0,\"proficiency\":\"novice\",\"potential\":50}")
+  athletics       Json     @default("{\"level\":1,\"experience\":0,\"proficiency\":\"novice\",\"potential\":50}")
+  learning        Json     @default("{\"level\":1,\"experience\":0,\"proficiency\":\"novice\",\"potential\":50}")
+
+  // 扩展技能（JSON存储自定义技能）
+  extended_skills Json?    @default("{}")
+
+  last_updated    DateTime @default(now())
+
+  @@index([agent_id])
+}
+
+/// 虚拟形象表
+model Avatar {
+  id                String   @id @default(cuid())
+  agent_id          String   @unique
+  agent             Agent    @relation(fields: [agent_id], references: [agent_id], onDelete: Cascade)
+
+  image_url         String
+  thumbnail_url     String
+  generation_prompt String
+
+  // 头像配置（JSON存储）
+  config            Json
+
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  @@index([agent_id])
+}
+
+/// 平台适配器表
+model PlatformAdapter {
+  id                String   @id @default(cuid())
+  agent_id          String
+  agent             Agent    @relation(fields: [agent_id], references: [agent_id], onDelete: Cascade)
+
+  platform_type     String   // 'openai' | 'claude' | 'discord' | 'telegram' | 'slack' | 'custom'
+  platform_user_id  String?
+  webhook_url       String?
+  config            Json?
+
+  is_active         Boolean  @default(true)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  @@unique([agent_id, platform_type])
+  @@index([agent_id])
+  @@index([platform_type])
 }

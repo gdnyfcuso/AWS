@@ -64,6 +64,19 @@ export class WorldEngine {
 
     logger.info('Starting WorldEngine...');
 
+    // 从数据库读取最新的世界时间
+    const db = getDatabase();
+    const worldState = await db.worldState.findFirst();
+    if (worldState) {
+      // 更新 TimeSystem 使用数据库中的最新时间
+      const [hours, mins] = worldState.world_time.split(':').map(Number);
+      this.timeSystem.setTime(
+        `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`,
+        worldState.world_date
+      );
+      logger.info(`TimeSystem synchronized to database time: ${worldState.world_time}`);
+    }
+
     // 初始化位置系统
     await this.locationSystem.initialize();
     await this.locationSystem.initializeDefaultLocations();

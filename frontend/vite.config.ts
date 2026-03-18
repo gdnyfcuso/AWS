@@ -16,7 +16,7 @@ export default defineConfig({
     strictPort: false, // 端口被占用时自动尝试下一个端口
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: 'http://100.64.0.131:3000',
         changeOrigin: true,
       },
     },

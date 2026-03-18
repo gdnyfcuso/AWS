@@ -21,8 +21,12 @@ const app = express();
 
 // 中间件
 app.use(helmet());
+// 解析 CORS_ORIGIN - 支持逗号分隔的多个来源
+const corsOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map((origin: string) => origin.trim())
+  : ['http://localhost:5173'];
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  origin: corsOrigins,
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -65,10 +69,12 @@ async function start(): Promise<void> {
     logger.info('Database initialized');
 
     // 创建并启动世界引擎
+    // 使用当前真实时间作为虚拟世界的起始时间
+    const now = new Date();
     const worldConfig = {
       timeSpeed: parseInt(process.env.WORLD_TIME_SPEED || '1', 10),
-      startTime: process.env.WORLD_START_TIME || '08:00',
-      startDate: process.env.WORLD_START_DATE || new Date().toISOString().split('T')[0],
+      startTime: process.env.WORLD_START_TIME || `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+      startDate: process.env.WORLD_START_DATE || now.toISOString().split('T')[0],
     };
 
     worldEngine = WorldEngine.getInstance(worldConfig);
@@ -76,7 +82,8 @@ async function start(): Promise<void> {
     logger.info('World engine started');
 
     // 启动 HTTP 服务器
-    app.listen(PORT, '0.0.0.0', () => {
+    const HOST = process.env.HOST || '100.64.0.131';
+    app.listen(PORT, HOST, () => {
       // 获取本机 IP 地址
       const os = require('os');
       const networkInterfaces = os.networkInterfaces();
@@ -91,13 +98,8 @@ async function start(): Promise<void> {
       }
 
       logger.info(`Server listening on port ${PORT}`);
-      logger.info(`Local: http://localhost:${PORT}`);
-      if (ips.length > 0) {
-        ips.forEach(ip => {
-          logger.info(`Network: http://${ip}:${PORT}`);
-        });
-      }
-      logger.info(`API available at http://localhost:${PORT}/api/v1`);
+      logger.info(`Local: http://${HOST}:${PORT}`);
+      logger.info(`API available at http://${HOST}:${PORT}/api/v1`);
     });
 
     // 优雅关闭

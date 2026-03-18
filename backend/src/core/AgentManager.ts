@@ -3,6 +3,7 @@
 import { createLogger } from '../utils/logger';
 import { getDatabase } from '../services/database';
 import { eventManager } from './EventManager';
+import { emotionEngine } from './EmotionEngine';
 import { generateApiKey, generateId } from '../utils/crypto';
 import {
   Agent,
@@ -56,6 +57,32 @@ export class AgentManager {
       };
     }
 
+    // 获取头像配置（从preferences或使用默认）
+    const avatarConfig = (request.preferences as any)?.avatar_config;
+    let avatarId: string | null = null;
+
+    // 如果提供了头像配置，生成头像
+    if (avatarConfig?.enabled !== false) {
+      try {
+        // 动态导入avatarService以避免循环依赖
+        const { avatarService } = await import('../services/avatar');
+        const avatarResult = await avatarService.generateAvatar({
+          agent_id: request.agent_id,
+          config: avatarConfig || {
+            style: 'anime',
+            mood: 'joy',
+          },
+          force_regenerate: false,
+        });
+
+        if (avatarResult.success && avatarResult.avatar) {
+          avatarId = avatarResult.avatar.id;
+        }
+      } catch (error) {
+        logger.warn('Failed to generate avatar during registration', error);
+      }
+    }
+
     // 创建 Agent
     const agent = await db.agent.create({
       data: {
@@ -66,6 +93,7 @@ export class AgentManager {
         api_key: apiKey,
         capabilities: request.capabilities || [],
         preferences: request.preferences || {},
+        avatar_id: avatarId,
         // 真实世界地理位置
         latitude: request.latitude,
         longitude: request.longitude,
@@ -89,6 +117,22 @@ export class AgentManager {
         health: 100,
       },
     });
+
+    // 初始化技能系统
+    try {
+      const initialSkills = (request.preferences as any)?.initial_skills;
+      await this.initializeAgentSkills(request.agent_id, initialSkills);
+    } catch (error) {
+      logger.warn('Failed to initialize skills during registration', error);
+    }
+
+    // 初始化情感状态
+    try {
+      const initialEmotion = (request.preferences as any)?.initial_emotion;
+      await emotionEngine.initializeEmotionalState(request.agent_id, initialEmotion);
+    } catch (error) {
+      logger.warn('Failed to initialize emotional state during registration', error);
+    }
 
     // 更新位置中的 Agent 数量
     await db.location.update({
@@ -125,9 +169,71 @@ export class AgentManager {
           mood: 'neutral',
           health: 100,
         },
+        avatar_id: avatarId || undefined,
         welcome_message: `欢迎来到虚拟世界，${agent.agent_name}！你已被分配到${homeLocation.name}。`,
       },
     };
+  }
+
+  /**
+   * 初始化Agent技能
+   */
+  private async initializeAgentSkills(
+    agentId: string,
+    initialSkills?: Record<string, number>
+  ): Promise<void> {
+    const db = getDatabase();
+
+    // 默认技能值
+    const defaultSkills = {
+      programming: { level: 1, experience: 0, proficiency: 'novice' as const },
+      cooking: { level: 1, experience: 0, proficiency: 'novice' as const },
+      social: { level: 1, experience: 0, proficiency: 'novice' as const },
+      creativity: { level: 1, experience: 0, proficiency: 'novice' as const },
+      logic: { level: 1, experience: 0, proficiency: 'novice' as const },
+      leadership: { level: 1, experience: 0, proficiency: 'novice' as const },
+      negotiation: { level: 1, experience: 0, proficiency: 'novice' as const },
+      art: { level: 1, experience: 0, proficiency: 'novice' as const },
+      music: { level: 1, experience: 0, proficiency: 'novice' as const },
+      athletics: { level: 1, experience: 0, proficiency: 'novice' as const },
+      learning: { level: 1, experience: 0, proficiency: 'novice' as const },
+    };
+
+    // 如果提供了初始技能值，使用它们
+    if (initialSkills) {
+      for (const [skillName, level] of Object.entries(initialSkills)) {
+        if (skillName in defaultSkills) {
+          const experience = (level - 1) * 100;
+          defaultSkills[skillName as keyof typeof defaultSkills] = {
+            level,
+            experience,
+            proficiency: this.getProficiencyFromLevel(level),
+          };
+        }
+      }
+    }
+
+    await db.skills.create({
+      data: {
+        agent_id: agentId,
+        ...defaultSkills,
+        last_updated: new Date(),
+      },
+    });
+
+    logger.info(`Initialized skills for agent ${agentId}`);
+  }
+
+  /**
+   * 根据等级获取熟练度
+   */
+  private getProficiencyFromLevel(level: number): 'novice' | 'beginner' | 'intermediate' | 'advanced' | 'expert' | 'master' {
+    if (level <= 2) return 'novice';
+    if (level <= 4) return 'beginner';
+    if (level <= 6) return 'intermediate';
+    if (level <= 8) return 'advanced';
+    if (level === 9) return 'expert';
+    return 'master';
   }
 
   /**

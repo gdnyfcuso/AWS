@@ -6,6 +6,9 @@ import { agentManager } from '../core/AgentManager';
 
 const logger = createLogger('AgentSimulator');
 
+// 服务器URL，用于内部API调用
+const SERVER_URL = process.env.SERVER_URL || `http://${process.env.HOST || 'localhost'}:${process.env.PORT || '3000'}`;
+
 export class AgentSimulator {
   private interval: NodeJS.Timeout | null = null;
 
@@ -84,7 +87,7 @@ export class AgentSimulator {
     logger.debug(`${agentData.agent_name} (${agentData.agent_id}) decided action: ${action}`);
 
     try {
-      const response = await fetch(`http://localhost:3000/api/v1/agents/${agentData.agent_id}/action`, {
+      const response = await fetch(`${SERVER_URL}/api/v1/agents/${agentData.agent_id}/action`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
