@@ -1,0 +1,229 @@
+// Prisma Schema for Agent World Database
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== Agent 相关 ====================
+
+model Agent {
+  id              String   @id @default(cuid())
+  agent_id        String   @unique
+  agent_name      String
+  agent_type      String
+  webhook_url     String?
+  api_key         String   @unique
+  capabilities    Json?
+  preferences     Json?
+
+  status          String   @default("offline")
+  last_ping       DateTime?
+
+  home_location_id String?
+  home_location    Location?  @relation(fields: [home_location_id], references: [id])
+
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  disconnected_at DateTime?
+
+  state           AgentState?
+  actions         Action[]
+  relationships   Relationship[] @relation("agent_relationships")
+  relationships2  Relationship[] @relation("agent_target_relationships")
+  sent_messages   ChatMessage[] @relation("message_sender")
+  received_messages ChatMessage[] @relation("message_receiver")
+  transactions    Transaction[] @relation("transaction_sender")
+  transactions2   Transaction[] @relation("transaction_receiver")
+}
+
+model AgentState {
+  id              String   @id @default(cuid())
+  agent_id        String   @unique
+  agent           Agent    @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+
+  location_id     String
+  location        Location @relation(fields: [location_id], references: [id])
+
+  money           Decimal  @default(1000)
+  energy          Int      @default(100)
+  mood            String   @default("neutral")
+  health          Int      @default(100)
+
+  total_earned    Decimal  @default(0)
+  total_spent     Decimal  @default(0)
+  interactions_count Int   @default(0)
+
+  updated_at      DateTime @updatedAt
+
+  @@index([location_id])
+}
+
+// ==================== 位置相关 ====================
+
+model Location {
+  id              String   @id @default(cuid())
+  location_id     String   @unique
+  name            String
+  description     String?
+  type            String
+  coordinates     Json
+
+  max_capacity    Int?
+  current_agents  Int      @default(0)
+
+  residents       Agent[]
+  agents_present  AgentState[]
+
+  parent_location_id String?
+  parent_location  Location?  @relation("location_hierarchy", fields: [parent_location_id], references: [id])
+  sub_locations    Location[] @relation("location_hierarchy")
+
+  created_at      DateTime @default(now())
+
+  @@index([type])
+}
+
+// ==================== 行动相关 ====================
+
+model Action {
+  id              String   @id @default(cuid())
+  agent_id        String
+  agent           Agent    @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+
+  action_type     String
+  parameters      Json?
+  reasoning       String?
+
+  success         Boolean
+  result          Json?
+  error_message   String?
+
+  state_changes   Json?
+
+  performed_at    DateTime @default(now())
+
+  @@index([agent_id])
+  @@index([performed_at])
+}
+
+// ==================== 事件相关 ====================
+
+model Event {
+  id              String   @id @default(cuid())
+  event_type      String
+  timestamp       DateTime @default(now())
+
+  data            Json
+
+  agent_id        String?
+  agent           Agent?   @relation(fields: [agent_id], references: [id], onDelete: SetNull)
+
+  delivered       Boolean  @default(false)
+  delivered_at    DateTime?
+
+  @@index([event_type])
+  @@index([timestamp])
+  @@index([agent_id])
+}
+
+// ==================== 社交相关 ====================
+
+model Relationship {
+  id              String   @id @default(cuid())
+  agent_id        String
+  agent           Agent    @relation("agent_relationships", fields: [agent_id], references: [id], onDelete: Cascade)
+
+  target_agent_id String
+  target_agent    Agent    @relation("agent_target_relationships", fields: [target_agent_id], references: [id], onDelete: Cascade)
+
+  relationship_type String @default("stranger")
+  relationship_level Int  @default(0)
+
+  interactions_count Int   @default(0)
+  last_interaction DateTime?
+
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@unique([agent_id, target_agent_id])
+  @@index([agent_id])
+  @@index([target_agent_id])
+}
+
+model ChatMessage {
+  id              String   @id @default(cuid())
+  sender_id       String
+  sender          Agent    @relation("message_sender", fields: [sender_id], references: [id], onDelete: Cascade)
+
+  receiver_id     String
+  receiver        Agent    @relation("message_receiver", fields: [receiver_id], references: [id], onDelete: Cascade)
+
+  message         String
+  message_type    String   @default("text")
+
+  location_id     String
+
+  sent_at         DateTime @default(now())
+  read_at         DateTime?
+
+  @@index([sender_id])
+  @@index([receiver_id])
+  @@index([sent_at])
+}
+
+// ==================== 经济相关 ====================
+
+model Transaction {
+  id              String   @id @default(cuid())
+  sender_id       String
+  sender          Agent    @relation("transaction_sender", fields: [sender_id], references: [id], onDelete: Cascade)
+
+  receiver_id     String
+  receiver        Agent    @relation("transaction_receiver", fields: [receiver_id], references: [id], onDelete: Cascade)
+
+  amount          Decimal
+  transaction_type String
+
+  description     String?
+  metadata        Json?
+
+  created_at      DateTime @default(now())
+
+  @@index([sender_id])
+  @@index([receiver_id])
+  @@index([created_at])
+}
+
+// ==================== 世界状态 ====================
+
+model WorldState {
+  id              String   @id @default(cuid())
+
+  world_time      String
+  world_date      String
+  day_phase       String
+
+  weather         String   @default("sunny")
+  season          String   @default("spring")
+
+  active_agents   Int      @default(0)
+  total_events_today Int   @default(0)
+
+  updated_at      DateTime @updatedAt
+}
+
+// ==================== 系统配置 ====================
+
+model SystemConfig {
+  id              String   @id @default(cuid())
+  key             String   @unique
+  value           Json
+  description     String?
+
+  updated_at      DateTime @updatedAt
+}

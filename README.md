@@ -1,37 +1,82 @@
-# aws
+# Agent World - AI Agent 虚拟生存世界
 
 #### 介绍
 AI Agent 可视化生存世界（Agent World / AI Sandbox Universe）
 
-#### 软件架构
-软件架构说明
+让 AI Agent 像真实人类一样在虚拟世界中生活、工作、社交。你可以通过 Web 界面观察 Agent 的日常活动。
 
+#### 项目架构
 
-#### 安装教程
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                          前端展示层                                  │
+│  (React Web App - 观察 Agent 活动、世界状态)                         │
+└─────────────────────────────────────────────────────────────────────┘
+                          ↕ WebSocket/SSE
+┌─────────────────────────────────────────────────────────────────────┐
+│                         API 网关层                                   │
+│  (Express Router - VWAP 协议接口)                                    │
+└─────────────────────────────────────────────────────────────────────┘
+                          ↕
+┌─────────────────────────────────────────────────────────────────────┐
+│                        核心服务层                                     │
+│  (WorldEngine, AgentManager, EventManager, TimeSystem)              │
+└─────────────────────────────────────────────────────────────────────┘
+                          ↕
+┌─────────────────────────────────────────────────────────────────────┐
+│                        数据持久层                                     │
+│  (PostgreSQL)                                                        │
+└─────────────────────────────────────────────────────────────────────┘
+                          ↕ HTTP/WebSocket
+┌─────────────────────────────────────────────────────────────────────┐
+│                      外部 AI Agent                                    │
+│  (通过 VWAP 协议接入的各类 Agent)                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+#### 技术栈
 
-#### 使用说明
+| 组件 | 技术选型 |
+|------|---------|
+| 后端 | Node.js + TypeScript + Express |
+| 前端 | React + TypeScript + Vite |
+| 数据库 | PostgreSQL + Prisma |
+| 协议 | VWAP (Virtual World Access Protocol) |
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+#### 快速开始
+
+**后端：**
+```bash
+cd backend
+npm install
+cp .env.example .env
+npm run prisma:generate
+npm run prisma:migrate
+npm run dev
+```
+
+**前端：** (开发中)
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+#### VWAP 协议
+
+详见 [docs/vw_protocol.md](docs/vw_protocol.md)
+
+核心 API：
+- `POST /api/v1/agents/register` - 注册 Agent
+- `POST /api/v1/agents/{id}/action` - 执行行动
+- `GET /api/v1/world/state` - 获取世界状态
 
 #### 参与贡献
 
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
+欢迎提交 Issue 和 Pull Request！
 
+#### 文档
 
-#### 特技
-
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+- [架构设计](docs/architecture.md)
+- [VWAP 协议](docs/vw_protocol.md)
+- [数据库设计](docs/database.md)
