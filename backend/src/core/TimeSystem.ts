@@ -12,7 +12,7 @@ export interface TimeConfig {
 }
 
 export interface WorldTime {
-  time: string; // HH:MM
+  time: string; // HH:MM:SS
   date: string; // YYYY-MM-DD
   dayPhase: 'morning' | 'afternoon' | 'evening' | 'night';
   season: 'spring' | 'summer' | 'autumn' | 'winter';
@@ -21,12 +21,14 @@ export interface WorldTime {
 export class TimeSystem {
   private config: TimeConfig;
   private currentTime: WorldTime;
+  private currentSeconds: number = 0; // 追踪当前秒数
   private interval: NodeJS.Timeout | null = null;
   private listeners: Array<(time: WorldTime) => void> = [];
 
   constructor(config: TimeConfig) {
     this.config = config;
     this.currentTime = this.parseDateTime(config.startDate, config.startTime);
+    this.currentSeconds = 0;
   }
 
   /**
@@ -38,13 +40,13 @@ export class TimeSystem {
     }
 
     // 根据速度计算更新间隔
-    // 速度1 = 每60秒更新1分钟
-    // 速度10 = 每6秒更新1分钟
-    const updateInterval = Math.max(100, 60000 / this.config.speed);
+    // 速度1 = 每60秒更新1分钟，每1秒更新1秒
+    // 速度10 = 每6秒更新1分钟，每0.6秒更新1秒
+    const tickInterval = Math.max(100, 1000 / this.config.speed);
 
     this.interval = setInterval(() => {
       this.tick();
-    }, updateInterval);
+    }, tickInterval);
 
     logger.info(`TimeSystem started with speed ${this.config.speed}x`);
   }
@@ -61,12 +63,31 @@ export class TimeSystem {
   }
 
   /**
-   * 时间流逝 - 每次调用增加一分钟
+   * 时间流逝 - 每次调用增加一秒
    */
   private tick(): void {
-    this.currentTime = this.advanceTime(this.currentTime, 1);
+    this.currentSeconds++;
+
+    // 每60秒推进一分钟
+    if (this.currentSeconds >= 60) {
+      this.currentSeconds = 0;
+      this.currentTime = this.advanceTime(this.currentTime, 1);
+    }
+
+    // 更新当前时间的秒数显示
+    const timeWithSeconds = this.getCurrentTimeWithSeconds();
     this.notifyListeners();
-    this.saveToDatabase();
+  }
+
+  /**
+   * 获取带秒的时间
+   */
+  private getCurrentTimeWithSeconds(): WorldTime {
+    const [hours, mins] = this.currentTime.time.split(':').map(Number);
+    return {
+      ...this.currentTime,
+      time: `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(this.currentSeconds).padStart(2, '0')}`,
+    };
   }
 
   /**
@@ -85,7 +106,6 @@ export class TimeSystem {
 
     const newHours = Math.floor(totalMinutes / 60);
     const newMins = totalMinutes % 60;
-    const newTime = `${String(newHours).padStart(2, '0')}:${String(newMins).padStart(2, '0')}`;
 
     // 处理日期变更
     let newDate = time.date;
@@ -96,7 +116,7 @@ export class TimeSystem {
     }
 
     return {
-      time: newTime,
+      time: `${String(newHours).padStart(2, '0')}:${String(newMins).padStart(2, '0')}`,
       date: newDate,
       dayPhase: this.getDayPhase(newHours),
       season: this.getSeason(newDate),
@@ -130,7 +150,7 @@ export class TimeSystem {
    * 获取当前时间
    */
   getCurrentTime(): WorldTime {
-    return { ...this.currentTime };
+    return this.getCurrentTimeWithSeconds();
   }
 
   /**
@@ -168,13 +188,14 @@ export class TimeSystem {
    */
   private async saveToDatabase(): Promise<void> {
     try {
+      const currentTime = this.getCurrentTime();
       const db = getDatabase();
       await db.worldState.updateMany({
         data: {
-          world_time: this.currentTime.time,
-          world_date: this.currentTime.date,
-          day_phase: this.currentTime.dayPhase,
-          season: this.currentTime.season,
+          world_time: currentTime.time,
+          world_date: currentTime.date,
+          day_phase: currentTime.dayPhase,
+          season: currentTime.season,
         },
       });
     } catch (error) {
@@ -186,9 +207,12 @@ export class TimeSystem {
    * 解析日期时间
    */
   private parseDateTime(date: string, time: string): WorldTime {
-    const [hours, mins] = time.split(':').map(Number);
+    const parts = time.split(':').map(Number);
+    const hours = parts[0] || 0;
+    const mins = parts[1] || 0;
+
     return {
-      time,
+      time: `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:00`,
       date,
       dayPhase: this.getDayPhase(hours),
       season: this.getSeason(date),
@@ -212,7 +236,8 @@ export class TimeSystem {
    * 检查是否是工作时间
    */
   isWorkTime(): boolean {
-    const [hours] = this.currentTime.time.split(':').map(Number);
+    const currentTime = this.getCurrentTime();
+    const [hours] = currentTime.time.split(':').map(Number);
     return hours >= 9 && hours < 18;
   }
 
@@ -220,7 +245,8 @@ export class TimeSystem {
    * 检查是否是休息时间
    */
   isSleepTime(): boolean {
-    const [hours] = this.currentTime.time.split(':').map(Number);
+    const currentTime = this.getCurrentTime();
+    const [hours] = currentTime.time.split(':').map(Number);
     return hours >= 22 || hours < 6;
   }
 }

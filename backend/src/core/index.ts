@@ -5,3 +5,5 @@ export { TimeSystem, type TimeConfig, type WorldTime } from './TimeSystem';
 export { LocationSystem, type LocationConfig } from './LocationSystem';
 export { AgentManager } from './AgentManager';
 export { EventManager, eventManager, type EventData } from './EventManager';
+export { getBehaviorLoop, type BehaviorLoopConfig } from './AgentBehaviorLoop';
+export { getSimulator } from './AgentSimulator';

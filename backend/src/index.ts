@@ -76,10 +76,28 @@ async function start(): Promise<void> {
     logger.info('World engine started');
 
     // 启动 HTTP 服务器
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {
+      // 获取本机 IP 地址
+      const os = require('os');
+      const networkInterfaces = os.networkInterfaces();
+      const ips: string[] = [];
+
+      for (const name of Object.keys(networkInterfaces)) {
+        for (const iface of networkInterfaces[name]) {
+          if (iface.family === 'IPv4' && !iface.internal) {
+            ips.push(iface.address);
+          }
+        }
+      }
+
       logger.info(`Server listening on port ${PORT}`);
+      logger.info(`Local: http://localhost:${PORT}`);
+      if (ips.length > 0) {
+        ips.forEach(ip => {
+          logger.info(`Network: http://${ip}:${PORT}`);
+        });
+      }
       logger.info(`API available at http://localhost:${PORT}/api/v1`);
-      logger.info(`Health check at http://localhost:${PORT}/api/v1/health`);
     });
 
     // 优雅关闭

@@ -66,6 +66,12 @@ export class AgentManager {
         api_key: apiKey,
         capabilities: request.capabilities || [],
         preferences: request.preferences || {},
+        // 真实世界地理位置
+        latitude: request.latitude,
+        longitude: request.longitude,
+        address: request.address,
+        city: request.city,
+        country: request.country,
         status: 'online',
         last_ping: new Date(),
         home_location_id: homeLocation.id,

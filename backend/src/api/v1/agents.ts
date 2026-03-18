@@ -8,6 +8,7 @@ import { eventManager } from '../../core/EventManager';
 import { authenticateApiKey, AuthenticatedRequest } from '../middleware/auth';
 import { ErrorCode } from '../../types';
 import { createLogger } from '../../utils/logger';
+import { getDatabase } from '../../services/database';
 
 const logger = createLogger('AgentsAPI');
 const router = Router();
@@ -21,7 +22,7 @@ const getEngine = () => WorldEngine.getInstance();
  */
 router.post('/register', async (req, res, next) => {
   try {
-    // 验证请求体
+    // 验证请求体 - 添加地理位置信息
     const schema = z.object({
       agent_id: z.string().min(1).max(100),
       agent_name: z.string().min(1).max(100),
@@ -29,6 +30,12 @@ router.post('/register', async (req, res, next) => {
       webhook_url: z.string().url().optional(),
       capabilities: z.array(z.string()).optional(),
       preferences: z.record(z.unknown()).optional(),
+      // 真实世界地理位置
+      latitude: z.number().min(-90).max(90).optional(),
+      longitude: z.number().min(-180).max(180).optional(),
+      address: z.string().optional(),
+      city: z.string().optional(),
+      country: z.string().optional(),
     });
 
     const validated = await schema.parseAsync(req.body);
@@ -79,6 +86,163 @@ router.post(
     }
   }
 );
+
+/**
+ * GET /api/v1/agents/list
+ * 获取所有 Agent 列表
+ */
+router.get('/list', async (req, res, next) => {
+  try {
+    const db = getDatabase();
+    const agents = await db.agent.findMany({
+      where: { status: 'online' },
+      select: {
+        agent_id: true,
+        agent_name: true,
+        agent_type: true,
+        status: true,
+      },
+    });
+
+    res.json({ agents });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/v1/agents/actions/recent
+ * 获取最近的行动记录
+ */
+router.get('/actions/recent', async (req, res, next) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 20;
+
+    const db = getDatabase();
+    const actions = await db.action.findMany({
+      take: limit,
+      orderBy: { performed_at: 'desc' },
+      include: {
+        agent: {
+          select: {
+            agent_id: true,
+            agent_name: true,
+          },
+        },
+      },
+    });
+
+    res.json({
+      actions: actions.map(action => ({
+        id: action.id,
+        agent_id: action.agent_id,
+        agent_name: action.agent?.agent_name || 'Unknown',
+        action_type: action.action_type,
+        success: action.success,
+        result: action.result,
+        performed_at: action.performed_at,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/v1/agents/geographic
+ * 获取所有 Agent 的地理位置信息（无需认证）
+ */
+router.get('/geographic', async (req, res, next) => {
+  try {
+    const db = getDatabase();
+    const agents = await db.agent.findMany({
+      where: { status: 'online' },
+      select: {
+        agent_id: true,
+        agent_name: true,
+        latitude: true,
+        longitude: true,
+        address: true,
+        city: true,
+        country: true,
+        status: true,
+        last_ping: true,
+      },
+    });
+
+    // 获取 Agent 状态
+    const agentsWithState = await Promise.all(
+      agents.map(async (agent) => {
+        const state = await db.agentState.findUnique({
+          where: { agent_id: agent.agent_id },
+          include: { location: true },
+        });
+
+        return {
+          ...agent,
+          energy: state?.energy || 100,
+          mood: state?.mood || 'neutral',
+          last_seen: agent.last_ping || new Date().toISOString(),
+        };
+      })
+    );
+
+    res.json({ agents: agentsWithState });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/v1/agents/:agent_id/view
+ * 获取 Agent 公开信息（无需认证）
+ */
+router.get('/:agent_id/view', async (req, res, next) => {
+  try {
+    const { agent_id } = req.params;
+
+    const state = await agentManager.getAgentState(agent_id);
+
+    if (!state) {
+      return res.status(404).json({
+        success: false,
+        error: 'Agent not found',
+      });
+    }
+
+    const agent = await agentManager.getAgent(agent_id);
+
+    if (!agent) {
+      return res.status(404).json({
+        success: false,
+        error: 'Agent not found',
+      });
+    }
+
+    res.json({
+      agent: {
+        agent_id: agent.agent_id,
+        agent_name: agent.agent_name,
+        agent_type: agent.agent_type,
+        status: agent.status,
+        location: {
+          id: state.location.location_id,
+          name: state.location.name,
+          coordinates: state.location.coordinates,
+          type: state.location.type,
+        },
+        attributes: {
+          money: Number(state.money),
+          energy: state.energy,
+          mood: state.mood,
+          health: state.health,
+        },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 /**
  * GET /api/v1/agents/:agent_id
@@ -170,6 +334,36 @@ router.post(
 // ==================== 辅助函数 ====================
 
 /**
+ * 记录行动到数据库
+ */
+async function recordAction(
+  agentId: string,
+  actionType: string,
+  parameters: Record<string, unknown>,
+  success: boolean,
+  result?: Record<string, unknown>,
+  errorMessage?: string,
+  stateChanges?: Record<string, unknown>
+): Promise<void> {
+  const db = getDatabase();
+  const actionId = `action_${Date.now()}_${agentId}`;
+
+  await db.action.create({
+    data: {
+      id: actionId,
+      agent_id: agentId,
+      action_type: actionType,
+      parameters: parameters as any,
+      reasoning: parameters.reasoning as string | null,
+      success,
+      result: result as any,
+      error_message: errorMessage,
+      state_changes: stateChanges as any,
+    },
+  });
+}
+
+/**
  * 执行行动
  */
 async function executeAction(
@@ -220,27 +414,32 @@ async function executeAction(
           to: officeLocation.location_id,
         });
 
+        const resultData = {
+          action_performed: 'go_to_work',
+          new_state: {
+            location: {
+              id: officeLocation.location_id,
+              name: officeLocation.name,
+              coordinates: officeLocation.coordinates,
+              type: officeLocation.type,
+            },
+            status: {
+              money: Number(state.money),
+              energy: Math.max(0, state.energy - 10),
+              mood: state.mood,
+              health: state.health,
+            },
+          },
+          events_triggered: eventsTriggered,
+          message: '你到达了办公室。',
+        };
+
+        // 记录行动
+        await recordAction(agentId, 'go_to_work', parameters, true, resultData, undefined, stateChanges);
+
         return {
           success: true,
-          result: {
-            action_performed: 'go_to_work',
-            new_state: {
-              location: {
-                id: officeLocation.location_id,
-                name: officeLocation.name,
-                coordinates: officeLocation.coordinates,
-                type: officeLocation.type,
-              },
-              status: {
-                money: Number(state.money),
-                energy: Math.max(0, state.energy - 10),
-                mood: state.mood,
-                health: state.health,
-              },
-            },
-            events_triggered: eventsTriggered,
-            message: '你到达了办公室。',
-          },
+          result: resultData,
         };
       }
 
@@ -265,32 +464,37 @@ async function executeAction(
         stateChanges.money = earnings;
         stateChanges.energy = -energyCost;
 
+        const resultData = {
+          action_performed: 'work',
+          new_state: {
+            location: {
+              id: state.location.location_id,
+              name: state.location.name,
+              coordinates: state.location.coordinates,
+              type: state.location.type,
+            },
+            status: {
+              money: Number(state.money) + earnings,
+              energy: state.energy - energyCost,
+              mood: 'focused',
+              health: state.health,
+            },
+          },
+          events_triggered: [
+            {
+              type: 'earned_money',
+              amount: earnings,
+            },
+          ],
+          message: `你工作了，获得了 ${earnings} 金币。`,
+        };
+
+        // 记录行动
+        await recordAction(agentId, 'work', parameters, true, resultData, undefined, stateChanges);
+
         return {
           success: true,
-          result: {
-            action_performed: 'work',
-            new_state: {
-              location: {
-                id: state.location.location_id,
-                name: state.location.name,
-                coordinates: state.location.coordinates,
-                type: state.location.type,
-              },
-              status: {
-                money: Number(state.money) + earnings,
-                energy: state.energy - energyCost,
-                mood: 'focused',
-                health: state.health,
-              },
-            },
-            events_triggered: [
-              {
-                type: 'earned_money',
-                amount: earnings,
-              },
-            ],
-            message: `你工作了，获得了 ${earnings} 金币。`,
-          },
+          result: resultData,
         };
       }
 
@@ -304,27 +508,32 @@ async function executeAction(
 
         stateChanges.energy = energyGain;
 
+        const resultData = {
+          action_performed: 'relax',
+          new_state: {
+            location: {
+              id: state.location.location_id,
+              name: state.location.name,
+              coordinates: state.location.coordinates,
+              type: state.location.type,
+            },
+            status: {
+              money: Number(state.money),
+              energy: Math.min(100, state.energy + energyGain),
+              mood: 'relaxed',
+              health: state.health,
+            },
+          },
+          events_triggered: [],
+          message: '你休息了一会儿，感觉好多了。',
+        };
+
+        // 记录行动
+        await recordAction(agentId, 'relax', parameters, true, resultData, undefined, stateChanges);
+
         return {
           success: true,
-          result: {
-            action_performed: 'relax',
-            new_state: {
-              location: {
-                id: state.location.location_id,
-                name: state.location.name,
-                coordinates: state.location.coordinates,
-                type: state.location.type,
-              },
-              status: {
-                money: Number(state.money),
-                energy: Math.min(100, state.energy + energyGain),
-                mood: 'relaxed',
-                health: state.health,
-              },
-            },
-            events_triggered: [],
-            message: '你休息了一会儿，感觉好多了。',
-          },
+          result: resultData,
         };
       }
 
@@ -338,27 +547,32 @@ async function executeAction(
 
         stateChanges.energy = energyGain;
 
+        const resultData = {
+          action_performed: 'sleep',
+          new_state: {
+            location: {
+              id: state.location.location_id,
+              name: state.location.name,
+              coordinates: state.location.coordinates,
+              type: state.location.type,
+            },
+            status: {
+              money: Number(state.money),
+              energy: Math.min(100, state.energy + energyGain),
+              mood: 'neutral',
+              health: state.health,
+            },
+          },
+          events_triggered: [],
+          message: '你睡了一觉，精神焕发。',
+        };
+
+        // 记录行动
+        await recordAction(agentId, 'sleep', parameters, true, resultData, undefined, stateChanges);
+
         return {
           success: true,
-          result: {
-            action_performed: 'sleep',
-            new_state: {
-              location: {
-                id: state.location.location_id,
-                name: state.location.name,
-                coordinates: state.location.coordinates,
-                type: state.location.type,
-              },
-              status: {
-                money: Number(state.money),
-                energy: Math.min(100, state.energy + energyGain),
-                mood: 'neutral',
-                health: state.health,
-              },
-            },
-            events_triggered: [],
-            message: '你睡了一觉，精神焕发。',
-          },
+          result: resultData,
         };
       }
 
@@ -399,32 +613,37 @@ async function executeAction(
           agent_id: targetAgentId,
         });
 
+        const resultData = {
+          action_performed: 'socialize',
+          new_state: {
+            location: {
+              id: state.location.location_id,
+              name: state.location.name,
+              coordinates: state.location.coordinates,
+              type: state.location.type,
+            },
+            status: {
+              money: Number(state.money),
+              energy: state.energy,
+              mood: 'happy',
+              health: state.health,
+            },
+          },
+          events_triggered: [
+            {
+              type: 'social_interaction',
+              target: targetAgentId,
+            },
+          ],
+          message: `你和 ${nearby.agent_name} 进行了愉快的交谈。`,
+        };
+
+        // 记录行动
+        await recordAction(agentId, 'socialize', parameters, true, resultData, undefined, stateChanges);
+
         return {
           success: true,
-          result: {
-            action_performed: 'socialize',
-            new_state: {
-              location: {
-                id: state.location.location_id,
-                name: state.location.name,
-                coordinates: state.location.coordinates,
-                type: state.location.type,
-              },
-              status: {
-                money: Number(state.money),
-                energy: state.energy,
-                mood: 'happy',
-                health: state.health,
-              },
-            },
-            events_triggered: [
-              {
-                type: 'social_interaction',
-                target: targetAgentId,
-              },
-            ],
-            message: `你和 ${nearby.agent_name} 进行了愉快的交谈。`,
-          },
+          result: resultData,
         };
       }
 

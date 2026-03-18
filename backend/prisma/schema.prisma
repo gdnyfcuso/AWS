@@ -21,6 +21,13 @@ model Agent {
   capabilities    Json?
   preferences     Json?
 
+  // 真实世界地理位置
+  latitude        Float?
+  longitude       Float?
+  address         String?
+  city            String?
+  country         String?
+
   status          String   @default("offline")
   last_ping       DateTime?
 

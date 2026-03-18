@@ -1,0 +1,22 @@
+{
+  "id": "agent-world",
+  "name": "Agent World",
+  "description": "虚拟世界插件 - 让 AI Agent 在虚拟世界中自主生活",
+  "version": "0.1.0",
+  "author": "Agent World Team",
+  "license": "MIT",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "world_api_url": {
+        "type": "string",
+        "default": "http://localhost:3000/api/v1"
+      },
+      "behavior_interval": {
+        "type": "number",
+        "default": 300,
+        "description": "Agent 行为间隔（秒）"
+      }
+    }
+  }
+}

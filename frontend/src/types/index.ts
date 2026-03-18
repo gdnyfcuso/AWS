@@ -26,8 +26,8 @@ export interface Agent {
   status: 'online' | 'offline' | 'busy';
   location: LocationInfo;
   attributes: AgentAttributes;
-  relationships: Relationship[];
-  recent_activities: Activity[];
+  relationships?: Relationship[];
+  recent_activities?: Activity[];
 }
 
 export interface LocationInfo {

@@ -3,6 +3,7 @@
 import { Clock, Cloud, Calendar, Users } from 'lucide-react';
 import { useWorldState } from '../hooks/useWorldState';
 import { cn } from '../utils/cn';
+import { useState, useEffect } from 'react';
 
 const weatherMap = {
   sunny: { label: '晴天', icon: '☀️', bg: 'from-yellow-400 to-orange-400' },
@@ -20,6 +21,34 @@ const seasonMap = {
 
 export function WorldHeader() {
   const { worldState, isLoading } = useWorldState();
+  const [realTime, setRealTime] = useState(new Date());
+
+  // 每秒更新真实时间
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setRealTime(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // 格式化真实时间
+  const formatRealTime = (date: Date) => {
+    return date.toLocaleTimeString('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+  };
+
+  // 格式化真实日期
+  const formatRealDate = (date: Date) => {
+    return date.toLocaleDateString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+  };
 
   if (isLoading || !worldState) {
     return (
@@ -46,14 +75,34 @@ export function WorldHeader() {
           </div>
 
           {/* 世界状态 */}
-          <div className="flex items-center gap-6">
-            {/* 时间 */}
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 rounded-lg">
-              <Clock className="w-4 h-4 text-gray-600" />
-              <span className="text-sm font-medium text-gray-700">{worldState.time}</span>
+          <div className="flex items-center gap-4">
+            {/* 真实时间 */}
+            <div className="flex flex-col items-end">
+              <div className="flex items-center gap-2">
+                <Clock className="w-3 h-3 text-blue-600" />
+                <span className="text-xs font-medium text-blue-600">真实时间</span>
+              </div>
+              <div className="text-xs font-mono text-gray-700">
+                {formatRealTime(realTime)}
+              </div>
             </div>
 
-            {/* 日期 */}
+            <div className="w-px h-8 bg-gray-200" />
+
+            {/* 虚拟世界时间 */}
+            <div className="flex flex-col items-start">
+              <div className="flex items-center gap-2">
+                <Clock className="w-3 h-3 text-world-600" />
+                <span className="text-xs font-medium text-world-600">虚拟时间</span>
+              </div>
+              <div className="text-xs font-mono text-gray-700">
+                {worldState.time}
+              </div>
+            </div>
+
+            <div className="w-px h-8 bg-gray-200" />
+
+            {/* 虚拟日期 */}
             <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 rounded-lg">
               <Calendar className="w-4 h-4 text-gray-600" />
               <span className="text-sm font-medium text-gray-700">{worldState.date}</span>

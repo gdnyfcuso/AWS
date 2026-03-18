@@ -1,7 +1,6 @@
 // 世界地图组件
 
 import { Building2, Home, Briefcase, Trees, Film } from 'lucide-react';
-import { useWorldState } from '../hooks/useWorldState';
 import { cn } from '../utils/cn';
 
 const locationIcons = {
@@ -20,17 +19,24 @@ const locationNames = {
   entertainment: '娱乐区',
 };
 
-export function WorldMap() {
-  const { locations } = useWorldState();
+interface WorldMapProps {
+  locations?: Array<{
+    id: string;
+    name: string;
+    type: string;
+    agents_present: number;
+  }>;
+}
 
+export function WorldMap({ locations = [] }: WorldMapProps) {
   // 按类型分组位置
-  const locationsByType = locations?.reduce((acc, loc) => {
+  const locationsByType = locations.reduce((acc, loc) => {
     if (!acc[loc.type]) {
       acc[loc.type] = [];
     }
     acc[loc.type].push(loc);
     return acc;
-  }, {} as Record<string, typeof locations>) || {};
+  }, {} as Record<string, typeof locations>);
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6">
@@ -69,8 +75,8 @@ export function WorldMap() {
       <div className="mt-6">
         <h3 className="text-sm font-medium text-gray-700 mb-3">所有地点</h3>
         <div className="space-y-2">
-          {locations?.map((location) => {
-            const iconData = locationIcons[location.type as keyof typeof locationIcons];
+          {locations.map((location) => {
+            const iconData = locationIcons[location.type as keyof typeof locationIcons] || locationIcons.residential;
             const Icon = iconData.icon;
 
             return (

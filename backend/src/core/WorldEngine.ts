@@ -6,7 +6,9 @@ import { TimeSystem } from './TimeSystem';
 import { LocationSystem } from './LocationSystem';
 import { AgentManager } from './AgentManager';
 import { eventManager } from './EventManager';
-import { WorldTime, WorldConfig } from '../core/TimeSystem';
+import { getBehaviorLoop } from './AgentBehaviorLoop';
+import { getSimulator } from './AgentSimulator';
+import { WorldTime, WorldConfig } from './TimeSystem';
 
 const logger = createLogger('WorldEngine');
 
@@ -25,6 +27,7 @@ export class WorldEngine {
   private locationSystem: LocationSystem;
   private agentManager: AgentManager;
   private config: WorldConfig;
+  private behaviorLoop?: ReturnType<typeof getBehaviorLoop>;
 
   private constructor(config: WorldConfig) {
     this.config = config;
@@ -68,6 +71,16 @@ export class WorldEngine {
     // 启动时间系统
     this.timeSystem.start();
 
+    // 启动行为循环
+    this.behaviorLoop = getBehaviorLoop({
+      interval: 60, // 1分钟推送一次世界状态
+      enabled: true,
+    });
+    this.behaviorLoop.start(this.timeSystem.getCurrentTime());
+
+    // 启动 Agent 模拟器
+    getSimulator().start(30); // 每30秒模拟一次行为
+
     this.running = true;
     logger.info('WorldEngine started successfully');
   }
@@ -81,6 +94,14 @@ export class WorldEngine {
     }
 
     logger.info('Stopping WorldEngine...');
+
+    // 停止行为循环
+    if (this.behaviorLoop) {
+      this.behaviorLoop.stop();
+    }
+
+    // 停止模拟器
+    getSimulator().stop();
 
     this.timeSystem.stop();
     this.running = false;
@@ -98,13 +119,16 @@ export class WorldEngine {
       where: { status: 'online' },
     });
 
+    // 从 TimeSystem 获取最新时间（包含秒）
+    const currentTime = this.timeSystem.getCurrentTime();
+
     return {
       running: this.running,
       time: {
-        time: worldState.world_time,
-        date: worldState.world_date,
-        dayPhase: worldState.day_phase as WorldTime['dayPhase'],
-        season: worldState.season as WorldTime['season'],
+        time: currentTime.time,
+        date: currentTime.date,
+        dayPhase: currentTime.dayPhase,
+        season: currentTime.season,
       },
       active_agents: onlineAgents,
       total_events_today: worldState.total_events_today,

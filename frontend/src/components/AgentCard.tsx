@@ -142,7 +142,7 @@ export function AgentCard({ agent, onClick }: AgentCardProps) {
       </div>
 
       {/* 最近活动 */}
-      {agent.recent_activities.length > 0 && (
+      {agent.recent_activities && agent.recent_activities.length > 0 && (
         <div className="mt-3 pt-3 border-t border-gray-100">
           <p className="text-xs text-gray-500 mb-1">最近活动</p>
           <p className="text-sm text-gray-700 truncate">

@@ -12,6 +12,12 @@ export interface AgentRegisterRequest {
     personality?: string;
     interests?: string[];
   };
+  // 真实世界地理位置
+  latitude?: number;
+  longitude?: number;
+  address?: string;
+  city?: string;
+  country?: string;
 }
 
 export interface LocationInfo {

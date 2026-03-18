@@ -84,7 +84,7 @@ export function AgentDetail() {
             </div>
 
             {/* 社交关系 */}
-            {agent.relationships.length > 0 && (
+            {agent.relationships && agent.relationships.length > 0 && (
               <div className="bg-white rounded-xl border border-gray-200 p-6">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4">社交关系</h2>
                 <div className="space-y-3">
@@ -112,21 +112,27 @@ export function AgentDetail() {
                 <Activity className="w-5 h-5" />
                 活动历史
               </h2>
-              <div className="space-y-3">
-                {agent.recent_activities.map((activity, index) => (
-                  <div
-                    key={index}
-                    className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg"
-                  >
-                    <div className="w-2 h-2 mt-2 rounded-full bg-world-500" />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900">{activity.action}</p>
-                      <p className="text-sm text-gray-600">{activity.result}</p>
-                      <p className="text-xs text-gray-500 mt-1">{activity.timestamp}</p>
+              {agent.recent_activities && agent.recent_activities.length > 0 ? (
+                <div className="space-y-3">
+                  {agent.recent_activities.map((activity, index) => (
+                    <div
+                      key={index}
+                      className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg"
+                    >
+                      <div className="w-2 h-2 mt-2 rounded-full bg-world-500" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-gray-900">{activity.action}</p>
+                        <p className="text-sm text-gray-600">{activity.result}</p>
+                        <p className="text-xs text-gray-500 mt-1">{activity.timestamp}</p>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  暂无活动记录
+                </div>
+              )}
             </div>
           </div>
         </div>
