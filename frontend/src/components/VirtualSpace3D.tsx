@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 // @ts-ignore - OrbitControls import
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { getApiUrl } from '../utils/api';
 
 interface Agent3D {
   agent_id: string;
@@ -33,7 +34,13 @@ interface VirtualSpace3DProps {
   agents: Agent3D[];
   buildings: Building3D[];
   onAgentClick?: (agentId: string) => void;
+  selectedAgentId?: string | null; // 外部传入选中的 Agent ID
+  viewMode?: 'first-person' | 'second-person' | 'third-person'; // 视角模式
+  onViewModeChange?: (mode: 'first-person' | 'second-person' | 'third-person') => void;
 }
+
+// 视角模式类型
+type ViewMode = 'first-person' | 'second-person' | 'third-person';
 
 const moodColors: Record<string, string> = {
   happy: '#22c55e',
@@ -44,17 +51,36 @@ const moodColors: Record<string, string> = {
   relaxed: '#06b6d4',
 };
 
-export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace3DProps) {
+export function VirtualSpace3D({
+  agents,
+  buildings,
+  onAgentClick,
+  selectedAgentId,
+  viewMode: externalViewMode,
+  onViewModeChange
+}: VirtualSpace3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<any>(null);
   const agentMeshesRef = useRef<THREE.Group>(new THREE.Group());
+  const isAnimatingRef = useRef(false);
+  // 存储每个 Agent 的目标位置，用于平滑移动
+  const agentTargetPositionsRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
+  // 存储 Agent 是否正在移动
+  const agentIsMovingRef = useRef<Map<string, boolean>>(new Map());
+  // 当前视角模式
+  const [currentViewMode, setCurrentViewMode] = useState<ViewMode>('third-person');
+  // 当前追踪的 Agent（用于第一/第二人称视角）
+  const trackedAgentRef = useRef<string | null>(null);
   const [webGLError, setWebGLError] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [sceneReady, setSceneReady] = useState(false);
   const [initAttempted, setInitAttempted] = useState(false);
+
+  // 使用外部传入的视角模式，如果没有则使用内部状态
+  const viewMode = externalViewMode || currentViewMode;
 
   // 检查 WebGL 支持
   useEffect(() => {
@@ -103,10 +129,10 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
       scene.fog = new THREE.Fog(0x87CEEB, 100, 500);
       sceneRef.current = scene;
 
-      // 创建相机
-      const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
-      camera.position.set(100, 100, 100);
-      camera.lookAt(0, 0, 0);
+      // 创建相机 - 调整位置让Agent看起来更大
+      const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
+      camera.position.set(40, 30, 40); // 更接近场景
+      camera.lookAt(0, 2, 0); // 稍微抬高视角中心
       cameraRef.current = camera;
 
       // 创建渲染器
@@ -118,7 +144,7 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
       renderer.setSize(width, height);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.shadowMap.type = THREE.PCFShadowMap;
       renderer.setClearColor(0x87CEEB, 1);
       container.appendChild(renderer.domElement);
       rendererRef.current = renderer;
@@ -127,10 +153,11 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
       const controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
       controls.dampingFactor = 0.05;
-      controls.autoRotate = false; // 不自动旋转
+      controls.autoRotate = false;
       controls.maxPolarAngle = Math.PI / 2 - 0.1; // 限制不能钻到地下
-      controls.minDistance = 20;
-      controls.maxDistance = 300;
+      controls.minDistance = 15; // 可以更接近
+      controls.maxDistance = 150; // 缩小最大距离
+      controls.target.set(0, 2, 0); // 设置旋转中心点在Agent高度
       controlsRef.current = controls;
 
       // 添加光源
@@ -151,7 +178,7 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
       scene.add(directionalLight);
 
       // 添加地面
-      const groundGeometry = new THREE.PlaneGeometry(500, 500);
+      const groundGeometry = new THREE.PlaneGeometry(200, 200);
       const groundMaterial = new THREE.MeshStandardMaterial({
         color: 0x7cfc00,
         roughness: 0.8
@@ -160,10 +187,9 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
       ground.rotation.x = -Math.PI / 2;
       ground.receiveShadow = true;
       scene.add(ground);
-      console.log('Ground added');
 
       // 添加网格辅助线
-      const gridHelper = new THREE.GridHelper(500, 50, 0x000000, 0x444444);
+      const gridHelper = new THREE.GridHelper(200, 20, 0x000000, 0x444444);
       gridHelper.position.y = 0.1;
       scene.add(gridHelper);
 
@@ -210,29 +236,255 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
       const agentGroup = new THREE.Group();
       agentGroup.position.set(agent.x, agent.y + 1, agent.z);
 
-      // Agent 身体（圆柱体）
-      const bodyGeometry = new THREE.CylinderGeometry(0.5, 0.5, 1.5, 8);
       const moodColor = moodColors[agent.mood] || '#6b7280';
-      const bodyMaterial = new THREE.MeshStandardMaterial({ color: moodColor });
+      const skinColor = 0xffcc99;
+
+      // === 下半身（腿和脚）===
+      // 左腿
+      const legGeometry = new THREE.CylinderGeometry(0.4, 0.3, 2.5, 8);
+      const legMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+      const leftLeg = new THREE.Mesh(legGeometry, legMaterial);
+      leftLeg.position.set(-0.5, 1.25, 0);
+      leftLeg.castShadow = true;
+      agentGroup.add(leftLeg);
+      leftLeg.userData = { part: 'leftLeg', initialY: 1.25 };
+
+      // 左脚
+      const footGeometry = new THREE.BoxGeometry(0.6, 0.3, 1);
+      const footMaterial = new THREE.MeshStandardMaterial({ color: 0x222222 });
+      const leftFoot = new THREE.Mesh(footGeometry, footMaterial);
+      leftFoot.position.set(-0.5, 0.15, 0.2);
+      leftFoot.castShadow = true;
+      agentGroup.add(leftFoot);
+      leftFoot.userData = { part: 'leftFoot', parent: 'leftLeg' };
+
+      // 右腿
+      const rightLeg = new THREE.Mesh(legGeometry, legMaterial);
+      rightLeg.position.set(0.5, 1.25, 0);
+      rightLeg.castShadow = true;
+      agentGroup.add(rightLeg);
+      rightLeg.userData = { part: 'rightLeg', initialY: 1.25 };
+
+      // 右脚
+      const rightFoot = new THREE.Mesh(footGeometry, footMaterial);
+      rightFoot.position.set(0.5, 0.15, 0.2);
+      rightFoot.castShadow = true;
+      agentGroup.add(rightFoot);
+      rightFoot.userData = { part: 'rightFoot', parent: 'rightLeg' };
+
+      // === 躯干 ===
+      const bodyGeometry = new THREE.CylinderGeometry(1.5, 1.8, 3.5, 16);
+      const bodyMaterial = new THREE.MeshStandardMaterial({
+        color: moodColor,
+        metalness: 0.3,
+        roughness: 0.7
+      });
       const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
-      body.position.y = 0.75;
+      body.position.y = 3.75;
       body.castShadow = true;
       agentGroup.add(body);
 
-      // Agent 头部（球体）
-      const headGeometry = new THREE.SphereGeometry(0.4, 16, 16);
-      const headMaterial = new THREE.MeshStandardMaterial({ color: 0xffcc99 });
+      // === 手臂 ===
+      // 左臂
+      const armGeometry = new THREE.CylinderGeometry(0.3, 0.25, 2.5, 8);
+      const armMaterial = new THREE.MeshStandardMaterial({ color: moodColor });
+      const leftArm = new THREE.Mesh(armGeometry, armMaterial);
+      leftArm.position.set(-1.3, 4, 0);
+      leftArm.rotation.z = Math.PI / 6; // 稍微张开
+      leftArm.castShadow = true;
+      agentGroup.add(leftArm);
+      leftArm.userData = { part: 'leftArm', initialRotation: Math.PI / 6 };
+
+      // 左手
+      const handGeometry = new THREE.SphereGeometry(0.35, 16, 16);
+      const handMaterial = new THREE.MeshStandardMaterial({ color: skinColor });
+      const leftHand = new THREE.Mesh(handGeometry, handMaterial);
+      leftHand.position.set(-1.8, 2.5, 0);
+      leftHand.castShadow = true;
+      agentGroup.add(leftHand);
+      leftHand.userData = { part: 'leftHand', parent: 'leftArm' };
+
+      // 右臂
+      const rightArm = new THREE.Mesh(armGeometry, armMaterial);
+      rightArm.position.set(1.3, 4, 0);
+      rightArm.rotation.z = -Math.PI / 6;
+      rightArm.castShadow = true;
+      agentGroup.add(rightArm);
+      rightArm.userData = { part: 'rightArm', initialRotation: -Math.PI / 6 };
+
+      // 右手
+      const rightHand = new THREE.Mesh(handGeometry, handMaterial);
+      rightHand.position.set(1.8, 2.5, 0);
+      rightHand.castShadow = true;
+      agentGroup.add(rightHand);
+      rightHand.userData = { part: 'rightHand', parent: 'rightArm' };
+
+      // === 头部 ===
+      const headGeometry = new THREE.SphereGeometry(1, 24, 24);
+      const headMaterial = new THREE.MeshStandardMaterial({
+        color: skinColor,
+        metalness: 0.1,
+        roughness: 0.5
+      });
       const head = new THREE.Mesh(headGeometry, headMaterial);
-      head.position.y = 1.8;
+      head.position.y = 6.2;
       head.castShadow = true;
       agentGroup.add(head);
+      head.userData = { part: 'head' };
 
-      // 添加点击事件
-      agentGroup.userData = { agentId: agent.agent_id };
+      // === 眼睛（更大更明显）===
+      const eyeWhiteGeometry = new THREE.SphereGeometry(0.3, 16, 16);
+      const eyeWhiteMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
+      const leftEyeWhite = new THREE.Mesh(eyeWhiteGeometry, eyeWhiteMaterial);
+      leftEyeWhite.position.set(-0.35, 6.3, 0.85);
+      agentGroup.add(leftEyeWhite);
+
+      const rightEyeWhite = new THREE.Mesh(eyeWhiteGeometry, eyeWhiteMaterial);
+      rightEyeWhite.position.set(0.35, 6.3, 0.85);
+      agentGroup.add(rightEyeWhite);
+
+      // 瞳孔
+      const pupilGeometry = new THREE.SphereGeometry(0.15, 16, 16);
+      const pupilMaterial = new THREE.MeshStandardMaterial({ color: 0x000000 });
+      const leftPupil = new THREE.Mesh(pupilGeometry, pupilMaterial);
+      leftPupil.position.set(-0.35, 6.3, 1.05);
+      agentGroup.add(leftPupil);
+      leftPupil.userData = { part: 'leftPupil' };
+
+      const rightPupil = new THREE.Mesh(pupilGeometry, pupilMaterial);
+      rightPupil.position.set(0.35, 6.3, 1.05);
+      agentGroup.add(rightPupil);
+      rightPupil.userData = { part: 'rightPupil' };
+
+      // === 嘴巴（简单的微笑弧线）===
+      const mouthGeometry = new THREE.TorusGeometry(0.2, 0.05, 8, 16, Math.PI);
+      const mouthMaterial = new THREE.MeshStandardMaterial({ color: 0xcc6666 });
+      const mouth = new THREE.Mesh(mouthGeometry, mouthMaterial);
+      mouth.position.set(0, 5.9, 0.85);
+      mouth.rotation.x = Math.PI / 2;
+      agentGroup.add(mouth);
+      mouth.userData = { part: 'mouth' };
+
+      // === 名称标签（可点击）===
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d')!;
+      canvas.width = 256;
+      canvas.height = 64;
+
+      // 标签背景
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+      ctx.roundRect(0, 0, 256, 64, 8);
+      ctx.fill();
+
+      // 名称
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.fillText(agent.agent_name, 128, 25);
+
+      // 状态
+      const statusIcon = agent.status === 'online' ? '🟢' : '🔴';
+      ctx.font = '16px sans-serif';
+      ctx.fillText(`${statusIcon} ⚡${agent.energy}%`, 128, 50);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      const labelGeometry = new THREE.PlaneGeometry(6, 1.5);
+      const labelMaterial = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        side: THREE.DoubleSide
+      });
+      const label = new THREE.Mesh(labelGeometry, labelMaterial);
+      label.position.set(0, 8, 0);
+      label.userData = {
+        isLabel: true,
+        agentId: agent.agent_id,
+        agentName: agent.agent_name,
+        agentPosition: new THREE.Vector3(agent.x, agent.y + 1, agent.z)
+      };
+      agentGroup.add(label);
+
+      // Agent 数据存储（用于动画和交互）
+      agentGroup.userData = {
+        agentId: agent.agent_id,
+        agentName: agent.agent_name,
+        mood: agent.mood,
+        energy: agent.energy,
+        status: agent.status,
+        parts: {
+          head,
+          leftArm,
+          rightArm,
+          leftLeg,
+          rightLeg,
+          leftHand,
+          rightHand,
+          leftPupil,
+          rightPupil,
+          mouth
+        },
+        // 动画状态
+        animationState: {
+          isWalking: false,
+          isWaving: false,
+          walkCycle: 0,
+          waveCycle: 0
+        }
+      };
+
+      // 初始化目标位置
+      agentTargetPositionsRef.current.set(agent.agent_id, { x: agent.x, y: agent.y, z: agent.z });
+
       group.add(agentGroup);
     });
 
   }, [agents, sceneReady]);
+
+  // 轮询更新 Agent 位置
+  useEffect(() => {
+    if (!sceneReady) return;
+
+    const pollPositions = async () => {
+      try {
+        // 获取虚拟世界中的 Agent 位置
+        const response = await fetch(getApiUrl('/api/v1/agents/virtual-positions'));
+        if (!response.ok) return;
+
+        const data = await response.json();
+
+        // 更新目标位置
+        data.agents.forEach((agent: any) => {
+          agentTargetPositionsRef.current.set(agent.agent_id, {
+            x: agent.x,
+            y: agent.y,
+            z: agent.z
+          });
+        });
+
+        // 同时更新 liveAgents 状态
+        setLiveAgents(data.agents.map((agent: any) => ({
+          agent_id: agent.agent_id,
+          agent_name: agent.agent_name,
+          x: agent.x,
+          y: agent.y,
+          z: agent.z,
+          energy: agent.energy,
+          mood: agent.mood,
+          status: agent.status,
+        })));
+      } catch (error) {
+        console.error('Error polling agent positions:', error);
+      }
+    };
+
+    // 立即执行一次
+    pollPositions();
+
+    // 每 3 秒轮询一次
+    const interval = setInterval(pollPositions, 3000);
+
+    return () => clearInterval(interval);
+  }, [sceneReady]);
 
   // 更新建筑显示
   useEffect(() => {
@@ -284,19 +536,281 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
 
   }, [buildings, sceneReady]);
 
+  // 聚焦到指定的 Agent（需要在 useEffect 之前定义）
+  const focusOnAgent = (agentId: string) => {
+    if (!agentMeshesRef.current || !cameraRef.current || !controlsRef.current) return;
+
+    const agent = agentMeshesRef.current.children.find(
+      (child: any) => child.userData?.agentId === agentId
+    ) as THREE.Group | undefined;
+
+    if (!agent) return;
+
+    const targetPos = agent.position.clone();
+    targetPos.y += 5;
+
+    const startPos = cameraRef.current.position.clone();
+    const startTarget = controlsRef.current.target.clone();
+    const duration = 1000;
+    const startTime = Date.now();
+
+    const animate = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const easeProgress = 1 - Math.pow(1 - progress, 3);
+
+      const offset = startPos.clone().sub(startTarget);
+      const newCameraPos = targetPos.clone().add(offset);
+      cameraRef.current!.position.lerpVectors(startPos, newCameraPos, easeProgress);
+      controlsRef.current!.target.lerpVectors(startTarget, targetPos, easeProgress);
+      controlsRef.current!.update();
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      }
+    };
+
+    animate();
+  };
+
+  // 视角模式更新函数
+  const updateCameraForViewMode = () => {
+    if (!cameraRef.current || !controlsRef.current || !agentMeshesRef.current) return;
+
+    // Validate camera is still a valid THREE.Camera instance
+    if (!cameraRef.current.isCamera) {
+      console.error('Camera is not a valid THREE.Camera instance');
+      return;
+    }
+
+    const mode = viewMode;
+    const trackedId = trackedAgentRef.current || selectedAgentId;
+
+    // If no tracked agent for first/second person mode, fall back to third-person behavior
+    if (!trackedId && mode !== 'third-person') {
+      controlsRef.current.enableRotate = true;
+      controlsRef.current.minDistance = 15;
+      controlsRef.current.maxDistance = 150;
+      return;
+    }
+
+    const trackedAgent = agentMeshesRef.current.children.find(
+      (child: any) => child.userData?.agentId === trackedId
+    ) as THREE.Group | undefined;
+
+    // If tracked agent not found for first/second person mode, fall back to third-person behavior
+    if (!trackedAgent && mode !== 'third-person') {
+      controlsRef.current.enableRotate = true;
+      controlsRef.current.minDistance = 15;
+      controlsRef.current.maxDistance = 150;
+      return;
+    }
+
+    const agentPos = trackedAgent?.position || new THREE.Vector3(0, 0, 0);
+    const agentRotation = trackedAgent?.rotation?.y || 0;
+
+    switch (mode) {
+      case 'first-person':
+        cameraRef.current.position.copy(agentPos);
+        cameraRef.current.position.y += 5.5;
+        controlsRef.current.target.set(
+          agentPos.x + Math.sin(agentRotation) * 10,
+          agentPos.y + 5.5,
+          agentPos.z + Math.cos(agentRotation) * 10
+        );
+        controlsRef.current.enableRotate = false;
+        break;
+
+      case 'second-person':
+        const cameraOffset = new THREE.Vector3(
+          Math.sin(agentRotation) * -8,
+          8,
+          Math.cos(agentRotation) * -8
+        );
+        cameraRef.current.position.copy(agentPos).add(cameraOffset);
+        controlsRef.current.target.copy(agentPos);
+        controlsRef.current.enableRotate = true;
+        controlsRef.current.minDistance = 5;
+        controlsRef.current.maxDistance = 20;
+        break;
+
+      case 'third-person':
+      default:
+        controlsRef.current.enableRotate = true;
+        controlsRef.current.minDistance = 15;
+        controlsRef.current.maxDistance = 150;
+        break;
+    }
+  };
+
+  // 当选中的 Agent 改变时，更新追踪
+  useEffect(() => {
+    if (selectedAgentId) {
+      trackedAgentRef.current = selectedAgentId;
+      focusOnAgent(selectedAgentId);
+    } else {
+      trackedAgentRef.current = null;
+    }
+  }, [selectedAgentId]);
+
+  // 当视角模式改变时通知父组件
+  useEffect(() => {
+    if (onViewModeChange) {
+      onViewModeChange(currentViewMode);
+    }
+  }, [currentViewMode]);
+
   // 动画循环
   useEffect(() => {
     if (!sceneReady || !rendererRef.current || !cameraRef.current) return;
 
     let animationId: number;
+    const clock = new THREE.Clock();
+
     const animate = () => {
       animationId = requestAnimationFrame(animate);
+      const time = clock.getElapsedTime();
 
       if (controlsRef.current) {
         controlsRef.current.update();
       }
 
-      if (rendererRef.current && sceneRef.current && cameraRef.current) {
+      // Agent动画和平滑移动
+      if (agentMeshesRef.current) {
+        agentMeshesRef.current.children.forEach(agentGroup => {
+          if (agentGroup instanceof THREE.Group && agentGroup.userData.parts) {
+            const parts = agentGroup.userData.parts;
+
+            // 平滑移动 Agent 到目标位置
+            const agentId = agentGroup.userData.agentId;
+            let isMoving = false;
+
+            if (agentId && agentTargetPositionsRef.current.has(agentId)) {
+              const targetPos = agentTargetPositionsRef.current.get(agentId)!;
+              const currentPos = agentGroup.position;
+              const lerpFactor = 0.02; // 移动速度
+
+              // 计算到目标的距离
+              const dx = targetPos.x - currentPos.x;
+              const dz = targetPos.z - currentPos.z;
+              const distance = Math.sqrt(dx * dx + dz * dz);
+
+              // 判断是否正在移动
+              isMoving = distance > 1;
+              agentIsMovingRef.current.set(agentId, isMoving);
+
+              // 线性插值到目标位置
+              agentGroup.position.x += dx * lerpFactor;
+              agentGroup.position.z += dz * lerpFactor;
+
+              // 移动时让 Agent 面向目标方向
+              if (isMoving) {
+                const targetAngle = Math.atan2(dx, dz);
+                agentGroup.rotation.y = THREE.MathUtils.lerp(
+                  agentGroup.rotation.y,
+                  targetAngle,
+                  0.1
+                );
+              }
+            }
+
+            // 行走动画 - 只有在移动时才播放
+            if (isMoving) {
+              // 大幅度的腿部摆动（行走）
+              const walkCycle = Math.sin(time * 8); // 更快的行走频率
+              const legSwingAngle = Math.PI / 4; // 45度摆动
+
+              if (parts.leftLeg) {
+                parts.leftLeg.rotation.x = walkCycle * legSwingAngle;
+              }
+              if (parts.rightLeg) {
+                parts.rightLeg.rotation.x = -walkCycle * legSwingAngle;
+              }
+
+              // 手臂大幅度摆动（与腿相反）
+              if (parts.leftArm) {
+                parts.leftArm.rotation.x = -walkCycle * legSwingAngle * 0.8;
+                parts.leftArm.rotation.z = Math.PI / 6;
+              }
+              if (parts.rightArm) {
+                parts.rightArm.rotation.x = walkCycle * legSwingAngle * 0.8;
+                parts.rightArm.rotation.z = -Math.PI / 6;
+              }
+
+              // 身体轻微上下起伏（行走时）
+              if (parts.head) {
+                parts.head.position.y = 6.2 + Math.abs(Math.sin(time * 8)) * 0.15;
+              }
+            } else {
+              // 静止时的动画
+              // 呼吸动画（头部轻微上下浮动）
+              if (parts.head) {
+                parts.head.position.y = 6.2 + Math.sin(time * 2) * 0.05;
+              }
+
+              // 腿部回归静止
+              if (parts.leftLeg) {
+                parts.leftLeg.rotation.x = 0;
+              }
+              if (parts.rightLeg) {
+                parts.rightLeg.rotation.x = 0;
+              }
+
+              // 手臂轻微摆动
+              const armSwing = Math.sin(time * 2) * 0.05;
+              if (parts.leftArm) {
+                parts.leftArm.rotation.x = armSwing;
+                parts.leftArm.rotation.z = Math.PI / 6 + Math.sin(time * 1.5) * 0.1;
+              }
+              if (parts.rightArm) {
+                parts.rightArm.rotation.x = -armSwing;
+                parts.rightArm.rotation.z = -Math.PI / 6 - Math.sin(time * 1.5) * 0.1;
+              }
+            }
+
+            // 眼睛眨动（始终进行）
+            if (parts.leftPupil && parts.rightPupil) {
+              const blinkCycle = (time * 0.3) % 1;
+              if (blinkCycle < 0.1) {
+                parts.leftPupil.scale.y = 0.1;
+                parts.rightPupil.scale.y = 0.1;
+              } else {
+                parts.leftPupil.scale.y = 1;
+                parts.rightPupil.scale.y = 1;
+              }
+            }
+
+            // 嘴巴动画（微笑）
+            if (parts.mouth) {
+              parts.mouth.scale.x = 1 + Math.sin(time * 1.5) * 0.1;
+            }
+          }
+        });
+      }
+
+      // 更新相机视角
+      updateCameraForViewMode();
+
+      // 让所有标签始终面向相机（billboard效果）
+      if (agentMeshesRef.current && cameraRef.current && cameraRef.current.isCamera) {
+        agentMeshesRef.current.children.forEach(agentGroup => {
+          if (agentGroup instanceof THREE.Group) {
+            agentGroup.children.forEach(child => {
+              if (child.userData.isLabel && child instanceof THREE.Mesh) {
+                child.lookAt(cameraRef.current!.position);
+              }
+            });
+          }
+        });
+      }
+
+      // 验证所有引用和相机有效性后再渲染
+      if (
+        rendererRef.current &&
+        sceneRef.current &&
+        cameraRef.current &&
+        cameraRef.current.isCamera === true
+      ) {
         rendererRef.current.render(sceneRef.current, cameraRef.current);
       }
     };
@@ -325,12 +839,56 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // 处理点击事件
+  // 处理点击事件和相机定位
   useEffect(() => {
     if (!sceneReady || !rendererRef.current) return;
 
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
+
+    // 相机平滑移动到目标位置
+    const animateCameraToTarget = (targetPosition: THREE.Vector3) => {
+      if (isAnimatingRef.current || !cameraRef.current || !controlsRef.current) return;
+
+      isAnimatingRef.current = true;
+      const startPosition = cameraRef.current.position.clone();
+      const startTarget = controlsRef.current.target.clone();
+      const endTarget = targetPosition.clone();
+      endTarget.y += 2; // 稍微抬高视角
+
+      const duration = 1000; // 1秒动画
+      const startTime = Date.now();
+
+      const animate = () => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        // 平滑缓动函数
+        const easeProgress = progress < 0.5
+          ? 2 * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+
+        // 计算新的相机位置（保持当前的距离和角度）
+        const offset = startPosition.clone().sub(startTarget);
+        const currentOffset = offset.clone().multiplyScalar(1 - easeProgress);
+        const newCameraPos = endTarget.clone().add(currentOffset);
+
+        // 计算新的控制目标
+        const newTarget = startTarget.clone().lerp(endTarget, easeProgress);
+
+        cameraRef.current!.position.copy(newCameraPos);
+        controlsRef.current!.target.copy(newTarget);
+        controlsRef.current!.update();
+
+        if (progress < 1) {
+          requestAnimationFrame(animate);
+        } else {
+          isAnimatingRef.current = false;
+        }
+      };
+
+      animate();
+    };
 
     const handleClick = (event: MouseEvent) => {
       if (!containerRef.current) return;
@@ -341,18 +899,54 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
 
       raycaster.setFromCamera(mouse, cameraRef.current!);
 
-      const intersects = raycaster.intersectObjects(agentMeshesRef.current.children, true);
-
-      if (intersects.length > 0) {
-        let obj = intersects[0].object;
-        while (obj.parent && !obj.userData.agentId) {
-          obj = obj.parent;
+      // 首先检查是否点击了标签
+      const allObjects = agentMeshesRef.current.children.flatMap((g: any) => {
+        if (g instanceof THREE.Group) {
+          return Array.from(g.children || []);
         }
-        if (obj.userData.agentId) {
-          setSelectedAgent(obj.userData.agentId);
-          if (onAgentClick) {
-            onAgentClick(obj.userData.agentId);
+        return [];
+      });
+
+      const labelIntersects = raycaster.intersectObjects(allObjects, true);
+
+      let clickedAgentData = null;
+
+      for (const intersect of labelIntersects) {
+        let obj: THREE.Object3D | null = intersect.object;
+        while (obj) {
+          if (obj.userData && obj.userData.isLabel && obj.userData.agentId) {
+            clickedAgentData = obj.userData;
+            break;
           }
+          obj = obj.parent;
+          if (!obj) break;
+        }
+        if (clickedAgentData) break;
+      }
+
+      // 如果没有点击标签，检查是否点击了Agent身体
+      if (!clickedAgentData) {
+        const bodyIntersects = raycaster.intersectObjects(agentMeshesRef.current.children, true);
+        for (const intersect of bodyIntersects) {
+          let obj = intersect.object;
+          while (obj.parent && !obj.userData?.agentId) {
+            obj = obj.parent;
+          }
+          if (obj.userData && obj.userData.agentId) {
+            clickedAgentData = obj.userData;
+            break;
+          }
+        }
+      }
+
+      if (clickedAgentData) {
+        setSelectedAgent(clickedAgentData.agentId);
+        if (clickedAgentData.agentPosition) {
+          // 平滑移动相机到Agent位置
+          animateCameraToTarget(clickedAgentData.agentPosition);
+        }
+        if (onAgentClick) {
+          onAgentClick(clickedAgentData.agentId);
         }
       }
     };
@@ -513,9 +1107,49 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
             {agents.length} 个 Agent | {buildings.length} 个建筑
           </p>
         </div>
-        <div className="text-xs text-gray-500">
-          {sceneReady ? '🖱️ 拖动旋转 | 滚轮缩放' : '⏳ 加载中...'}
+        <div className="flex items-center gap-3">
+          {/* 视角切换按钮 */}
+          <div className="flex items-center bg-gray-100 rounded-lg p-1">
+            <button
+              onClick={() => setCurrentViewMode('third-person')}
+              className={`px-3 py-1 text-xs rounded-md transition-all ${
+                viewMode === 'third-person'
+                  ? 'bg-white text-world-700 font-medium shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+              title="第三人称视角（自由视角）"
+            >
+              第三人称
+            </button>
+            <button
+              onClick={() => setCurrentViewMode('second-person')}
+              className={`px-3 py-1 text-xs rounded-md transition-all ${
+                viewMode === 'second-person'
+                  ? 'bg-white text-world-700 font-medium shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+              title="第二人称视角（跟踪视角）"
+              disabled={!selectedAgent}
+            >
+              第二人称
+            </button>
+            <button
+              onClick={() => setCurrentViewMode('first-person')}
+              className={`px-3 py-1 text-xs rounded-md transition-all ${
+                viewMode === 'first-person'
+                  ? 'bg-white text-world-700 font-medium shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+              title="第一人称视角（Agent视角）"
+              disabled={!selectedAgent}
+            >
+              第一人称
+            </button>
+          </div>
         </div>
+          <div className="text-xs text-gray-500">
+            {sceneReady ? '🖱️ 拖动旋转 | 滚轮缩放' : '⏳ 加载中...'}
+          </div>
       </div>
 
       {/* 3D 渲染区域 */}
@@ -547,7 +1181,12 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
           return (
             <button
               key={agent.agent_id}
-              onClick={() => setSelectedAgent(agent.agent_id)}
+              onClick={() => {
+                setSelectedAgent(agent.agent_id);
+                if (onAgentClick) {
+                  onAgentClick(agent.agent_id);
+                }
+              }}
               className={`flex items-center gap-2 p-2 rounded-lg border text-left transition-all ${
                 selectedAgent === agent.agent_id
                   ? 'border-world-500 bg-world-50'
@@ -567,7 +1206,15 @@ export function VirtualSpace3D({ agents, buildings, onAgentClick }: VirtualSpace
       {/* 操作提示 */}
       {sceneReady && (
         <div className="mt-2 text-xs text-gray-500 flex items-center justify-between">
-          <span>💡 左键拖动旋转 | 右键拖动平移 | 滚轮缩放</span>
+          <span>
+            💡 左键拖动旋转 | 右键拖动平移 | 滚轮缩放
+            {selectedAgent && ` | 当前追踪: ${agents.find(a => a.agent_id === selectedAgent)?.agent_name}`}
+          </span>
+          <span>
+            {viewMode === 'first-person' && '🎮 第一人称视角'}
+            {viewMode === 'second-person' && '🎮 第二人称视角'}
+            {viewMode === 'third-person' && '🎮 第三人称视角'}
+          </span>
         </div>
       )}
     </div>

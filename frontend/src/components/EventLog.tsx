@@ -40,6 +40,7 @@ const actionColors = {
   go_home: 'border-orange-300 bg-orange-50',
   socialize: 'border-purple-300 bg-purple-50',
   chat: 'border-pink-300 bg-pink-50',
+  move: 'border-teal-300 bg-teal-50',
 };
 
 export function EventLog() {
@@ -48,8 +49,11 @@ export function EventLog() {
 
   const fetchActions = async () => {
     try {
-      const response = await fetch(getApiUrl('/api/v1/agents/actions/recent?limit=20'));
+      const url = getApiUrl('/api/v1/agents/actions/recent?limit=20');
+      console.log('Fetching actions from:', url);
+      const response = await fetch(url);
       const data: ActionsResponse = await response.json();
+      console.log('Actions response:', data);
       setActions(data.actions || []);
     } catch (error) {
       console.error('Failed to fetch actions:', error);

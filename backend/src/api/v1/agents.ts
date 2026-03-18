@@ -9,6 +9,7 @@ import { authenticateApiKey, AuthenticatedRequest } from '../middleware/auth';
 import { ErrorCode } from '../../types';
 import { createLogger } from '../../utils/logger';
 import { getDatabase } from '../../services/database';
+import { getLocationFromIP, getClientIP, getDefaultLocation } from '../../services/location';
 
 const logger = createLogger('AgentsAPI');
 const router = Router();
@@ -30,15 +31,41 @@ router.post('/register', async (req, res, next) => {
       webhook_url: z.string().url().optional(),
       capabilities: z.array(z.string()).optional(),
       preferences: z.record(z.unknown()).optional(),
-      // 真实世界地理位置
+      // 真实世界地理位置（可选，如果不提供则从 IP 自动获取）
       latitude: z.number().min(-90).max(90).optional(),
       longitude: z.number().min(-180).max(180).optional(),
       address: z.string().optional(),
       city: z.string().optional(),
       country: z.string().optional(),
+      // 是否跳过 IP 定位
+      skip_ip_location: z.boolean().optional(),
     });
 
     const validated = await schema.parseAsync(req.body);
+
+    // 如果没有提供位置信息且未跳过 IP 定位，则从 IP 自动获取
+    if ((!validated.latitude || !validated.longitude) && !validated.skip_ip_location) {
+      const clientIP = getClientIP(req);
+      logger.info(`Detecting location from IP: ${clientIP}`);
+
+      const ipLocation = await getLocationFromIP(clientIP);
+
+      if (ipLocation) {
+        validated.latitude = ipLocation.latitude;
+        validated.longitude = parseFloat(ipLocation.longitude);
+        validated.city = validated.city || ipLocation.city;
+        validated.country = validated.country || ipLocation.country;
+        logger.info(`Location detected: ${ipLocation.city}, ${ipLocation.country}`);
+      } else {
+        // 使用默认位置
+        const defaultLocation = getDefaultLocation();
+        validated.latitude = validated.latitude || defaultLocation.latitude;
+        validated.longitude = validated.longitude || parseFloat(defaultLocation.longitude);
+        validated.city = validated.city || defaultLocation.city;
+        validated.country = validated.country || defaultLocation.country;
+        logger.info(`Using default location: ${defaultLocation.city}`);
+      }
+    }
 
     const result = await agentManager.registerAgent(validated);
 
@@ -143,6 +170,60 @@ router.get('/actions/recent', async (req, res, next) => {
         performed_at: action.performed_at,
       })),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/v1/agents/virtual-positions
+ * 获取所有 Agent 的虚拟世界位置信息（无需认证）
+ */
+router.get('/virtual-positions', async (req, res, next) => {
+  try {
+    const db = getDatabase();
+    const agents = await db.agent.findMany({
+      where: { status: 'online' },
+      select: {
+        agent_id: true,
+        agent_name: true,
+        status: true,
+      },
+    });
+
+    // 获取 Agent 状态和虚拟世界位置
+    const agentsWithPositions = await Promise.all(
+      agents.map(async (agent) => {
+        const state = await db.agentState.findUnique({
+          where: { agent_id: agent.agent_id },
+          include: { location: true },
+        });
+
+        if (!state) {
+          return null;
+        }
+
+        return {
+          agent_id: agent.agent_id,
+          agent_name: agent.agent_name,
+          // 转换 2D 地图坐标到 3D 世界坐标
+          x: state.location.coordinates?.x || 0,
+          y: 0,  // 地面高度
+          z: state.location.coordinates?.y || 0,  // 地图 y 轴对应 3D z 轴
+          location_id: state.location.location_id,
+          location_name: state.location.name,
+          location_type: state.location.type,
+          energy: state.energy,
+          mood: state.mood,
+          status: agent.status,
+        };
+      })
+    );
+
+    // 过滤掉 null 值
+    const validAgents = agentsWithPositions.filter((a): a is NonNullable<typeof a> => a !== null);
+
+    res.json({ agents: validAgents });
   } catch (error) {
     next(error);
   }
@@ -390,6 +471,65 @@ async function executeAction(
 
   try {
     switch (action) {
+      case 'move': {
+        // 随机移动到一个新位置
+        const locations = locationSystem.getAllLocations();
+        const availableLocations = locations.filter(loc => loc.id !== state.location.id);
+
+        if (availableLocations.length === 0) {
+          return {
+            success: false,
+            error: 'No other locations available',
+            error_code: ErrorCode.LOCATION_NOT_FOUND,
+          };
+        }
+
+        // 随机选择一个新位置
+        const randomIndex = Math.floor(Math.random() * availableLocations.length);
+        const newLocation = availableLocations[randomIndex];
+
+        // 更新位置（使用 Location.id，不是 location_id）
+        await agentManager.updateAgentState(agentId, {
+          location_id: newLocation.id,
+          energy: Math.max(0, state.energy - 5), // 移动消耗少量能量
+        });
+
+        stateChanges.energy = -5;
+        eventsTriggered.push({
+          type: 'location_changed',
+          from: state.location.location_id,
+          to: newLocation.location_id,
+        });
+
+        const resultData = {
+          action_performed: 'move',
+          new_state: {
+            location: {
+              id: newLocation.location_id,
+              name: newLocation.name,
+              coordinates: newLocation.coordinates,
+              type: newLocation.type,
+            },
+            status: {
+              money: Number(state.money),
+              energy: Math.max(0, state.energy - 5),
+              mood: state.mood,
+              health: state.health,
+            },
+          },
+          events_triggered: eventsTriggered,
+          message: `你移动到了 ${newLocation.name}。`,
+        };
+
+        // 记录行动
+        await recordAction(agentId, 'move', parameters, true, resultData, undefined, stateChanges);
+
+        return {
+          success: true,
+          result: resultData,
+        };
+      }
+
       case 'go_to_work': {
         const officeLocation = locationSystem.getLocation('office_tech_park');
 

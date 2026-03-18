@@ -18,6 +18,7 @@ export default defineConfig({
       '/api': {
         target: 'http://100.64.0.131:3000',
         changeOrigin: true,
+        rewrite: (path) => path, // 保持路径不变
       },
     },
   },

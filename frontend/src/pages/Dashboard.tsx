@@ -13,8 +13,10 @@ import { useAgentRelationships } from '../hooks/useAgentRelationships';
 import { useRealWorldAgents } from '../hooks/useRealWorldAgents';
 import { useEffect, useState } from 'react';
 import { Box, Globe } from 'lucide-react';
+import { getApiUrl } from '../utils/api';
 
-type ViewMode = 'realworld-map' | 'virtual-3d';
+type MainViewMode = 'realworld-map' | 'virtual-3d';
+type CameraViewMode = 'first-person' | 'second-person' | 'third-person';
 
 export function Dashboard() {
   const { worldState, locations, isLoading, error } = useWorldState();
@@ -23,7 +25,9 @@ export function Dashboard() {
   const { agents: geographicAgents, isLoading: isLoadingGeo } = useRealWorldAgents();
 
   const [debugInfo, setDebugInfo] = useState('');
-  const [viewMode, setViewMode] = useState<ViewMode>('realworld-map');
+  const [viewMode, setViewMode] = useState<MainViewMode>('realworld-map');
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [cameraViewMode, setCameraViewMode] = useState<CameraViewMode>('third-person');
 
   // 调试信息
   useEffect(() => {
@@ -33,29 +37,39 @@ export function Dashboard() {
   // 处理地图上的 Agent 点击
   const handleAgentClick = (agentId: string) => {
     console.log('Agent clicked:', agentId);
+    setSelectedAgentId(agentId);
     setViewMode('virtual-3d');
   };
 
   // 处理 3D 视图中的 Agent 点击
   const handleVirtualAgentClick = (agentId: string) => {
     console.log('Virtual agent clicked:', agentId);
+    setSelectedAgentId(agentId);
   };
 
-  // 获取 3D 虚拟空间所需的 Agent 数据（从地理位置数据转换）
-  const virtualAgents = geographicAgents
-    .filter((agent: any) => agent.lat !== null && agent.lng !== null)
-    .map((agent: any) => ({
-      agent_id: agent.agent_id,
-      agent_name: agent.agent_name,
-      x: ((agent.lng || 116.4) - 116.4) * 100, // 将经度转换为虚拟空间坐标
-      y: 0,
-      z: ((agent.lat || 39.9) - 39.9) * 100, // 将纬度转换为虚拟空间坐标
-      energy: agent.energy,
-      mood: agent.mood,
-      status: agent.status,
-    }));
+  // 获取 3D 虚拟空间所需的 Agent 数据（使用虚拟世界位置）
+  const [virtualAgents, setVirtualAgents] = useState<any[]>([]);
 
-  // 调试：如果没有地理位置数据，使用所有Agent的数据
+  // 获取虚拟世界位置
+  useEffect(() => {
+    const fetchVirtualPositions = async () => {
+      try {
+        const response = await fetch(getApiUrl('/api/v1/agents/virtual-positions'));
+        if (response.ok) {
+          const data = await response.json();
+          setVirtualAgents(data.agents);
+        }
+      } catch (error) {
+        console.error('Failed to fetch virtual positions:', error);
+      }
+    };
+
+    fetchVirtualPositions();
+    // 每 3 秒刷新一次
+    const interval = setInterval(fetchVirtualPositions, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
   const displayAgents = virtualAgents.length > 0 ? virtualAgents : agents.map(a => ({
     agent_id: a.agent_id,
     agent_name: a.name || a.agent_name,
@@ -69,7 +83,7 @@ export function Dashboard() {
 
   // 获取 3D 虚拟空间的建筑数据
   const virtualBuildings = (locations || []).map((loc, index) => {
-    // 使用位置坐标，如果没有则按索引分布
+    // 使用位置坐标，转换 2D 地图坐标到 3D 世界坐标
     const coords = loc.coordinates || { x: 0, y: 0, z: 0 };
     const angle = (index / ((locations?.length || 1) || 1)) * Math.PI * 2;
     const radius = 80;
@@ -78,9 +92,9 @@ export function Dashboard() {
       id: loc.id,
       name: loc.name,
       type: loc.type,
-      x: coords.x !== 0 ? coords.x : Math.cos(angle) * radius,
+      x: coords.x || Math.cos(angle) * radius,
       y: 0,
-      z: coords.z !== 0 ? coords.z : Math.sin(angle) * radius,
+      z: coords.y || Math.sin(angle) * radius,  // 地图 y 轴对应 3D z 轴
       width: 30,
       depth: 30,
       height: 40 + Math.random() * 60,
@@ -189,6 +203,9 @@ export function Dashboard() {
               agents={displayAgents}
               buildings={virtualBuildings}
               onAgentClick={handleVirtualAgentClick}
+              selectedAgentId={selectedAgentId}
+              viewMode={cameraViewMode}
+              onViewModeChange={setCameraViewMode}
             />
           )}
         </div>

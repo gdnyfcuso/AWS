@@ -129,14 +129,14 @@ export class AgentSimulator {
       }
     }
 
-    // 随机行为
-    const actions = ['work', 'relax', 'socialize'];
-    const weights = [4, 3, 2]; // work 权重更高
+    // 随机行为 - 添加 move 选项
+    const actions = ['move', 'work', 'relax', 'socialize'];
+    const weights = [3, 4, 3, 2]; // move 权重较高
 
     // 根据能量调整权重
     if (energy < 50) {
-      weights[0] = 1; // work 权重降低
-      weights[1] = 5; // relax 权重提高
+      weights[1] = 1; // work 权重降低
+      weights[2] = 5; // relax 权重提高
     }
 
     return this.weightedRandom(actions, weights);
