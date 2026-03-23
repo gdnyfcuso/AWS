@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { cn } from '../utils/cn';
+import { useResponsiveClasses } from '../hooks/useMobileDetection';
 
 interface Location {
   id: string;
@@ -69,6 +70,7 @@ export function AgentWorldMap({ agents, locations, interactions = [] }: AgentWor
   const [hoveredAgent, setHoveredAgent] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [animationFrame, setAnimationFrame] = useState(0);
+  const responsive = useResponsiveClasses();
 
   // 地图配置 - 调整以适应实际的坐标范围
   const mapConfig = {
@@ -328,26 +330,30 @@ export function AgentWorldMap({ agents, locations, interactions = [] }: AgentWor
     : [];
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
+    <div className={cn("bg-white rounded-xl border border-gray-200", responsive.cardPadding)}>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">虚拟世界地图</h2>
-          <p className="text-xs text-gray-500 mt-1">实时显示 Agent 位置和互动</p>
+          <h2 className={cn("font-semibold text-gray-900", responsive.sectionTitle)}>虚拟世界地图</h2>
+          {!responsive.isMobile && (
+            <p className="text-xs text-gray-500 mt-1">实时显示 Agent 位置和互动</p>
+          )}
         </div>
-        <div className="flex items-center gap-4 text-xs text-gray-500">
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 rounded-full bg-green-500" />
-            <span>住宅</span>
+        {!responsive.isMobile && (
+          <div className="flex items-center gap-4 text-xs text-gray-500">
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-3 rounded-full bg-green-500" />
+              <span>住宅</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-3 rounded-full bg-blue-500" />
+              <span>办公</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-3 rounded-full bg-purple-500" />
+              <span>互动</span>
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 rounded-full bg-blue-500" />
-            <span>办公</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 rounded-full bg-purple-500" />
-            <span>互动</span>
-          </div>
-        </div>
+        )}
       </div>
 
       <div className="relative">
@@ -364,19 +370,24 @@ export function AgentWorldMap({ agents, locations, interactions = [] }: AgentWor
 
         {/* Agent 详情卡片 */}
         {displayAgent && (
-          <div className="absolute top-4 right-4 bg-white rounded-lg shadow-xl border border-gray-200 p-4 min-w-56">
-            <div className="flex items-center gap-2 mb-3">
+          <div className={cn(
+            "absolute bg-white rounded-lg shadow-xl border border-gray-200",
+            responsive.isMobile
+              ? "bottom-2 left-2 right-2 p-3"
+              : "top-4 right-4 p-4 min-w-56"
+          )}>
+            <div className={cn("flex items-center mb-3", responsive.isMobile ? "gap-1" : "gap-2")}>
               <div
-                className="w-4 h-4 rounded-full"
+                className={cn("rounded-full", responsive.isMobile ? "w-3 h-3" : "w-4 h-4")}
                 style={{
                   backgroundColor: moodColors[displayAgent.mood as keyof typeof moodColors]
                 }}
               />
-              <span className="font-bold text-gray-900">{displayAgent.agent_name}</span>
+              <span className={cn("font-bold text-gray-900", responsive.isMobile ? "text-sm" : "")}>{displayAgent.agent_name}</span>
               <span className="text-xs text-gray-500">•</span>
-              <span className="text-xs text-gray-500">{displayAgent.agent_id}</span>
+              <span className={cn("text-gray-500", responsive.isMobile ? "text-xs truncate max-w-[100px]" : "text-xs")}>{displayAgent.agent_id}</span>
             </div>
-            <div className="space-y-2 text-sm">
+            <div className={cn("space-y-2", responsive.isMobile ? "text-xs" : "text-sm")}>
               <div className="flex justify-between">
                 <span className="text-gray-600">位置</span>
                 <span className="font-medium text-gray-900">{displayAgent.location_name}</span>
@@ -400,12 +411,12 @@ export function AgentWorldMap({ agents, locations, interactions = [] }: AgentWor
             {/* 同位置的 Agent */}
             {sameLocationAgents.length > 0 && (
               <div className="mt-3 pt-3 border-t border-gray-100">
-                <div className="text-xs text-gray-500 mb-2">附近的 Agent</div>
+                <div className={cn("text-gray-500 mb-2", responsive.isMobile ? "text-xs" : "text-xs")}>附近的 Agent</div>
                 <div className="space-y-1">
                   {sameLocationAgents.map(agent => (
-                    <div key={agent.agent_id} className="flex items-center gap-2 text-xs">
+                    <div key={agent.agent_id} className={cn("flex items-center gap-2", responsive.isMobile ? "text-xs" : "text-xs")}>
                       <div
-                        className="w-2 h-2 rounded-full"
+                        className={cn("rounded-full", responsive.isMobile ? "w-1.5 h-1.5" : "w-2 h-2")}
                         style={{
                           backgroundColor: moodColors[agent.mood as keyof typeof moodColors]
                         }}
@@ -422,7 +433,10 @@ export function AgentWorldMap({ agents, locations, interactions = [] }: AgentWor
       </div>
 
       {/* Agent 状态栏 */}
-      <div className="mt-4 grid grid-cols-5 gap-2">
+      <div className={cn(
+        "mt-4 grid gap-2",
+        responsive.isMobile ? "grid-cols-2 sm:grid-cols-3" : "grid-cols-5"
+      )}>
         {agents.map(agent => (
           <button
             key={agent.agent_id}
@@ -431,18 +445,19 @@ export function AgentWorldMap({ agents, locations, interactions = [] }: AgentWor
               'flex items-center gap-2 p-2 rounded-lg border text-left transition-all',
               selectedAgent === agent.agent_id
                 ? 'border-world-500 bg-world-50 shadow-md'
-                : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
+                : 'border-gray-200 hover:border-gray-300 hover:shadow-sm',
+              responsive.isMobile ? "gap-1" : "gap-2"
             )}
           >
             <div
-              className="w-3 h-3 rounded-full flex-shrink-0"
+              className={cn("rounded-full flex-shrink-0", responsive.isMobile ? "w-2 h-2" : "w-3 h-3")}
               style={{
                 backgroundColor: moodColors[agent.mood as keyof typeof moodColors]
               }}
             />
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-gray-900 truncate">{agent.agent_name}</div>
-              <div className="flex items-center gap-1 text-xs text-gray-500">
+              <div className={cn("font-medium text-gray-900 truncate", responsive.isMobile ? "text-xs" : "text-sm")}>{agent.agent_name}</div>
+              <div className={cn("flex items-center gap-1 text-gray-500", responsive.isMobile ? "text-xs hidden" : "text-xs")}>
                 <span className="truncate">{agent.location_name}</span>
                 <span>•</span>
                 <span>{agent.energy}%</span>

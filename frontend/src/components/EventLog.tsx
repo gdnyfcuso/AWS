@@ -4,6 +4,7 @@ import { Bell, Clock, RefreshCw } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { cn } from '../utils/cn';
 import { getApiUrl } from '../utils/api';
+import { useResponsiveClasses } from '../hooks/useMobileDetection';
 
 interface Action {
   id: string;
@@ -46,6 +47,7 @@ const actionColors = {
 export function EventLog() {
   const [actions, setActions] = useState<Action[]>([]);
   const [loading, setLoading] = useState(true);
+  const responsive = useResponsiveClasses();
 
   const fetchActions = async () => {
     try {
@@ -83,52 +85,59 @@ export function EventLog() {
     return actionColors[actionType as keyof typeof actionColors] || 'border-gray-300 bg-gray-50';
   };
 
+  // 移动端最大高度
+  const listMaxHeight = responsive.isMobile ? 'max-h-60' : 'max-h-96';
+
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
+    <div className={cn("bg-white rounded-xl border border-gray-200", responsive.cardPadding)}>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-gray-900">Agent 活动日志</h2>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <Bell className="w-4 h-4" />
-            <span>{actions.length} 条记录</span>
+        <h2 className={cn("font-semibold text-gray-900", responsive.sectionTitle)}>Agent 活动日志</h2>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm text-gray-500">
+            <Bell className="w-3 h-3 sm:w-4 sm:h-4" />
+            <span className="hidden sm:inline">{actions.length} 条记录</span>
+            <span className="sm:hidden">{actions.length}</span>
           </div>
           <button
             onClick={fetchActions}
             className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
             title="刷新"
           >
-            <RefreshCw className={cn('w-4 h-4 text-gray-500', loading && 'animate-spin')} />
+            <RefreshCw className={cn('w-3 h-3 sm:w-4 sm:h-4 text-gray-500', loading && 'animate-spin')} />
           </button>
         </div>
       </div>
 
       {loading ? (
-        <div className="text-center py-8 text-gray-500">加载中...</div>
+        <div className="text-center py-6 sm:py-8 text-gray-500">加载中...</div>
       ) : actions.length === 0 ? (
-        <div className="text-center py-8 text-gray-500">暂无活动记录</div>
+        <div className="text-center py-6 sm:py-8 text-gray-500">暂无活动记录</div>
       ) : (
-        <div className="space-y-3 max-h-96 overflow-y-auto">
+        <div className={cn(
+          "space-y-2 sm:space-y-3 overflow-y-auto",
+          listMaxHeight
+        )}>
           {actions.map((action) => (
             <div
               key={action.id}
               className={cn(
-                'flex gap-3 p-3 rounded-lg border-l-4',
+                'flex gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg border-l-4',
                 getActionColor(action.action_type)
               )}
             >
               <div className="flex-shrink-0 mt-0.5">
-                <Clock className="w-4 h-4 text-gray-400" />
+                <Clock className="w-3 h-3 sm:w-4 sm:h-4 text-gray-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-medium text-sm text-gray-900">{action.agent_name}</span>
+                <div className="flex items-center gap-1 sm:gap-2 mb-1 flex-wrap">
+                  <span className="font-medium text-xs sm:text-sm text-gray-900">{action.agent_name}</span>
                   <span className="text-xs text-gray-500">执行了</span>
                   <span className="text-xs font-medium text-world-600">
                     {action.result?.action_performed || action.action_type}
                   </span>
                 </div>
                 {action.result?.message && (
-                  <p className="text-sm text-gray-600">{action.result.message}</p>
+                  <p className="text-xs sm:text-sm text-gray-600 line-clamp-2">{action.result.message}</p>
                 )}
                 <p className="text-xs text-gray-500 mt-1">{formatTime(action.performed_at)}</p>
               </div>

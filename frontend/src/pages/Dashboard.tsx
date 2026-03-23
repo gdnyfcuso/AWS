@@ -15,8 +15,9 @@ import { useTerrainData } from '../hooks/useTerrainData';
 import { useCityTerrainByAgent } from '../hooks/useCityTerrain';
 import { useRoadNetwork } from '../hooks/useRoadNetwork';
 import { useVehicles } from '../hooks/useVehicles';
+import { useMobileDetection, useResponsiveClasses } from '../hooks/useMobileDetection';
 import { useEffect, useState } from 'react';
-import { Box, Globe } from 'lucide-react';
+import { Box, Globe, Smartphone } from 'lucide-react';
 import { getApiUrl } from '../utils/api';
 
 type MainViewMode = 'realworld-map' | 'virtual-3d';
@@ -28,8 +29,12 @@ export function Dashboard() {
   const { nodes, edges } = useAgentRelationships();
   const { agents: geographicAgents, isLoading: isLoadingGeo } = useRealWorldAgents();
 
+  // Mobile detection
+  const mobile = useMobileDetection();
+  const responsive = useResponsiveClasses();
+
   const [debugInfo, setDebugInfo] = useState('');
-  const [viewMode, setViewMode] = useState<MainViewMode>('realworld-map');
+  const [viewMode, setViewMode] = useState<MainViewMode>(mobile.isMobile ? 'virtual-3d' : 'realworld-map');
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [cameraViewMode, setCameraViewMode] = useState<CameraViewMode>('third-person');
   const [is3DFullscreen, setIs3DFullscreen] = useState(false);
@@ -166,43 +171,55 @@ export function Dashboard() {
     <div className="min-h-screen bg-gray-50">
       <WorldHeader />
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className={`max-w-7xl mx-auto ${responsive.containerPadding}`}>
         {/* 调试信息 */}
         <div className="mb-4 text-xs text-gray-500">
           {debugInfo}
         </div>
 
         {/* 欢迎横幅 */}
-        <div className="mb-6 p-6 bg-gradient-to-r from-world-500 to-world-700 rounded-xl text-white">
-          <h1 className="text-2xl font-bold mb-2">欢迎来到 Agent World</h1>
-          <p className="text-world-100">
-            当前有 {worldState?.active_agents || 0} 个 AI Agent 正在虚拟世界中自主生活
-          </p>
+        <div className={`mb-6 ${responsive.cardPadding} bg-gradient-to-r from-world-500 to-world-700 rounded-xl text-white`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className={`${responsive.pageTitle} font-bold mb-2`}>欢迎来到 Agent World</h1>
+              <p className="text-world-100">
+                当前有 {worldState?.active_agents || 0} 个 AI Agent 正在虚拟世界中自主生活
+              </p>
+            </div>
+            {mobile.isMobile && (
+              <div className="flex items-center gap-2 bg-white/20 rounded-lg px-3 py-2">
+                <Smartphone className="w-4 h-4" />
+                <span className="text-sm">手机模式</span>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* 视图模式切换 */}
-        <div className="mb-6 flex items-center gap-2 bg-white rounded-xl border border-gray-200 p-2">
+        <div className={`mb-6 flex items-center ${mobile.isMobile ? 'gap-1' : 'gap-2'} bg-white rounded-xl border border-gray-200 p-2`}>
           <button
             onClick={() => setViewMode('realworld-map')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
+            className={`flex items-center ${mobile.isMobile ? 'gap-1 px-2 py-1.5 text-xs' : 'gap-2 px-4 py-2'} rounded-lg transition-all ${
               viewMode === 'realworld-map'
                 ? 'bg-world-100 text-world-700 font-medium'
                 : 'text-gray-600 hover:bg-gray-100'
             }`}
           >
-            <Globe className="w-4 h-4" />
-            <span>真实世界地图</span>
+            <Globe className={mobile.isMobile ? 'w-3 h-3' : 'w-4 h-4'} />
+            {!mobile.isMobile && <span>真实世界地图</span>}
+            {mobile.isMobile && <span>地图</span>}
           </button>
           <button
             onClick={() => setViewMode('virtual-3d')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
+            className={`flex items-center ${mobile.isMobile ? 'gap-1 px-2 py-1.5 text-xs' : 'gap-2 px-4 py-2'} rounded-lg transition-all ${
               viewMode === 'virtual-3d'
                 ? 'bg-world-100 text-world-700 font-medium'
                 : 'text-gray-600 hover:bg-gray-100'
             }`}
           >
-            <Box className="w-4 h-4" />
-            <span>3D 虚拟空间</span>
+            <Box className={mobile.isMobile ? 'w-3 h-3' : 'w-4 h-4'} />
+            {!mobile.isMobile && <span>3D 虚拟空间</span>}
+            {mobile.isMobile && <span>3D</span>}
           </button>
         </div>
 
@@ -226,7 +243,7 @@ export function Dashboard() {
           )}
 
           {viewMode === 'virtual-3d' && (
-            <div className="relative bg-gray-900 rounded-xl overflow-hidden border border-gray-300" style={{ height: '70vh' }}>
+            <div className="relative bg-gray-900 rounded-xl overflow-hidden border border-gray-300" style={{ height: responsive.view3dHeight }}>
               {/* 当前城市信息显示 */}
               {cityTerrainData.city && (
                 <div className="absolute top-4 left-4 z-10 bg-black/60 text-white px-4 py-2 rounded-lg backdrop-blur-sm">
@@ -265,15 +282,17 @@ export function Dashboard() {
                 enableTerrain={true}
                 enableRoads={true}
                 enableVehicles={true}
-                isFullscreen={is3DFullscreen}
+                externalIsFullscreen={is3DFullscreen}
                 onFullscreenChange={setIs3DFullscreen}
+                isMobile={mobile.isMobile}
+                isTouchDevice={mobile.isMobile}
               />
             </div>
           )}
         </div>
 
         {/* 可视化地图区域 */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+        <div className={`grid grid-cols-1 ${mobile.isMobile ? '' : 'xl:grid-cols-2'} gap-6 mb-6`}>
           {agents.length > 0 && (locations?.length || 0) > 0 ? (
             <AgentWorldMap agents={agents} locations={mapLocations} interactions={interactions} />
           ) : (
@@ -291,7 +310,7 @@ export function Dashboard() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className={`grid grid-cols-1 ${mobile.isMobile ? '' : 'lg:grid-cols-3'} gap-6`}>
           {/* 左侧：事件日志 */}
           <div className="lg:col-span-2">
             <EventLog />
@@ -299,8 +318,8 @@ export function Dashboard() {
 
           {/* 右侧：Agent 列表 */}
           <div>
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">在线 Agent</h2>
+            <div className={`bg-white rounded-xl border border-gray-200 ${responsive.cardPadding}`}>
+              <h2 className={`${responsive.sectionTitle} font-semibold text-gray-900 mb-4`}>在线 Agent</h2>
               <AgentList />
             </div>
           </div>

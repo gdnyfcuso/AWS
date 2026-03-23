@@ -56,6 +56,9 @@ interface VirtualSpace3DProps {
   // 全屏控制
   externalIsFullscreen?: boolean;
   onFullscreenChange?: (externalIsFullscreen: boolean) => void;
+  // 移动端检测
+  isMobile?: boolean;
+  isTouchDevice?: boolean;
 }
 
 // 视角模式类型
@@ -286,6 +289,8 @@ export function VirtualSpace3D({
   enableVehicles = true,
   externalIsFullscreen: externalIsFullscreen = false,
   onFullscreenChange,
+  isMobile = false,
+  isTouchDevice: _isTouchDevice = false,
 }: VirtualSpace3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -1955,8 +1960,8 @@ export function VirtualSpace3D({
           </div>
         )}
 
-        {/* 键盘控制提示 */}
-        {sceneReady && selectedAgent && (
+        {/* 键盘控制提示 - 仅在非移动端显示 */}
+        {sceneReady && selectedAgent && !isMobile && (
           <div className="absolute bottom-4 left-4 z-10 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-3 text-white">
             <div className="text-sm font-medium mb-2">🎮 键盘控制</div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
@@ -2153,8 +2158,8 @@ export function VirtualSpace3D({
           </div>
         )}
 
-        {/* 键盘控制提示 - 全屏模式 */}
-        {sceneReady && selectedAgent && (
+        {/* 键盘控制提示 - 全屏模式，仅在非移动端显示 */}
+        {sceneReady && selectedAgent && !isMobile && (
           <div className="absolute bottom-8 left-8 z-10 bg-black/70 backdrop-blur-sm rounded-lg px-6 py-4 text-white">
             <div className="text-base font-medium mb-3">🎮 键盘控制</div>
             <div className="grid grid-cols-3 gap-x-6 gap-y-2 text-sm">
