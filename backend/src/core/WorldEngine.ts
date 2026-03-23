@@ -9,6 +9,9 @@ import { eventManager } from './EventManager';
 import { getBehaviorLoop } from './AgentBehaviorLoop';
 import { getSimulator } from './AgentSimulator';
 import { WorldTime, WorldConfig } from './TimeSystem';
+import { terrainSystem } from './TerrainSystem';
+import { roadNetwork } from './RoadNetwork';
+import { vehicleSystem } from './VehicleSystem';
 
 const logger = createLogger('WorldEngine');
 
@@ -80,6 +83,28 @@ export class WorldEngine {
     // 初始化位置系统
     await this.locationSystem.initialize();
     await this.locationSystem.initializeDefaultLocations();
+
+    // 初始化3D虚拟空间扩展系统
+    try {
+      await terrainSystem.initialize();
+      logger.info('TerrainSystem initialized');
+    } catch (error) {
+      logger.warn('Failed to initialize TerrainSystem:', error);
+    }
+
+    try {
+      await roadNetwork.initialize();
+      logger.info('RoadNetwork initialized');
+    } catch (error) {
+      logger.warn('Failed to initialize RoadNetwork:', error);
+    }
+
+    try {
+      await vehicleSystem.initialize();
+      logger.info('VehicleSystem initialized');
+    } catch (error) {
+      logger.warn('Failed to initialize VehicleSystem:', error);
+    }
 
     // 启动时间系统
     this.timeSystem.start();

@@ -5,6 +5,8 @@ import agentsRouter from './agents';
 import worldRouter from './world';
 import avatarRouter from './avatar';
 import platformRouter from './platform';
+import world3dRouter from './world3d';
+import skillsRouter from './skills';
 
 const router = Router();
 
@@ -13,6 +15,8 @@ router.use('/agents', agentsRouter);
 router.use('/world', worldRouter);
 router.use('/avatar', avatarRouter);
 router.use('/platform', platformRouter);
+router.use('/world3d', world3dRouter);
+router.use('/skills', skillsRouter);
 
 // 健康检查
 router.get('/health', (req, res) => {

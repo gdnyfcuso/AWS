@@ -11,6 +11,9 @@ import { useWorldState } from '../hooks/useWorldState';
 import { useWorldMap } from '../hooks/useWorldMap';
 import { useAgentRelationships } from '../hooks/useAgentRelationships';
 import { useRealWorldAgents } from '../hooks/useRealWorldAgents';
+import { useTerrainData } from '../hooks/useTerrainData';
+import { useRoadNetwork } from '../hooks/useRoadNetwork';
+import { useVehicles } from '../hooks/useVehicles';
 import { useEffect, useState } from 'react';
 import { Box, Globe } from 'lucide-react';
 import { getApiUrl } from '../utils/api';
@@ -24,10 +27,16 @@ export function Dashboard() {
   const { nodes, edges } = useAgentRelationships();
   const { agents: geographicAgents, isLoading: isLoadingGeo } = useRealWorldAgents();
 
+  // 3D虚拟空间数据
+  const { data: terrainData } = useTerrainData(true);
+  const { data: roadNetworkData } = useRoadNetwork(true);
+  const { vehicles } = useVehicles(true);
+
   const [debugInfo, setDebugInfo] = useState('');
   const [viewMode, setViewMode] = useState<MainViewMode>('realworld-map');
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [cameraViewMode, setCameraViewMode] = useState<CameraViewMode>('third-person');
+  const [is3DFullscreen, setIs3DFullscreen] = useState(false);
 
   // 调试信息
   useEffect(() => {
@@ -199,14 +208,32 @@ export function Dashboard() {
           )}
 
           {viewMode === 'virtual-3d' && (
-            <VirtualSpace3D
-              agents={displayAgents}
-              buildings={virtualBuildings}
-              onAgentClick={handleVirtualAgentClick}
-              selectedAgentId={selectedAgentId}
-              viewMode={cameraViewMode}
-              onViewModeChange={setCameraViewMode}
-            />
+            <div className={`relative bg-gray-900 rounded-xl overflow-hidden border border-gray-300 transition-all duration-300 ${
+              is3DFullscreen ? 'fixed inset-0 z-50 rounded-none border-0' : ''
+            }`} style={is3DFullscreen ? {} : { height: '70vh' }}>
+              <VirtualSpace3D
+                agents={displayAgents}
+                buildings={virtualBuildings}
+                onAgentClick={handleVirtualAgentClick}
+                selectedAgentId={selectedAgentId}
+                viewMode={cameraViewMode}
+                onViewModeChange={setCameraViewMode}
+                terrainFeatures={[
+                  ...terrainData.mountains,
+                  ...terrainData.hills,
+                  ...terrainData.rivers,
+                  ...terrainData.plains,
+                ]}
+                roads={roadNetworkData.roads}
+                intersections={roadNetworkData.intersections}
+                vehicles={vehicles}
+                enableTerrain={true}
+                enableRoads={true}
+                enableVehicles={true}
+                isFullscreen={is3DFullscreen}
+                onFullscreenChange={setIs3DFullscreen}
+              />
+            </div>
           )}
         </div>
 

@@ -52,6 +52,9 @@ interface VirtualSpace3DProps {
   enableTerrain?: boolean;
   enableRoads?: boolean;
   enableVehicles?: boolean;
+  // 全屏控制
+  externalIsFullscreen?: boolean;
+  onFullscreenChange?: (externalIsFullscreen: boolean) => void;
 }
 
 // 视角模式类型
@@ -280,6 +283,8 @@ export function VirtualSpace3D({
   enableTerrain = true,
   enableRoads = true,
   enableVehicles = true,
+  externalIsFullscreen: externalIsFullscreen = false,
+  onFullscreenChange,
 }: VirtualSpace3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -305,6 +310,14 @@ export function VirtualSpace3D({
 
   // 使用外部传入的视角模式，如果没有则使用内部状态
   const viewMode = externalViewMode || currentViewMode;
+
+  // 全屏切换函数
+  const toggleFullscreen = () => {
+    const newFullscreenState = !externalIsFullscreen;
+    if (onFullscreenChange) {
+      onFullscreenChange(newFullscreenState);
+    }
+  };
 
   // 更新 viewModeRef 以保持最新值
   useEffect(() => {
@@ -384,8 +397,8 @@ export function VirtualSpace3D({
       controls.dampingFactor = 0.05;
       controls.autoRotate = false;
       controls.maxPolarAngle = Math.PI / 2 - 0.1; // 限制不能钻到地下
-      controls.minDistance = 30; // 调整最小距离
-      controls.maxDistance = 500; // 扩大最大距离
+      controls.minDistance = 50; // 调整最小距离
+      controls.maxDistance = 1500; // 扩大最大距离以查看整个场景
       controls.target.set(0, 0, 0); // 设置旋转中心点
       controlsRef.current = controls;
 
@@ -425,6 +438,20 @@ export function VirtualSpace3D({
       vehiclesGroup.name = 'VehiclesGroup';
       scene.add(vehiclesGroup);
       (sceneRef.current as any).vehiclesGroup = vehiclesGroup;
+
+      // 添加基础地面（绿色草地）作为视觉参考
+      const groundGeometry = new THREE.PlaneGeometry(2000, 2000);
+      const groundMaterial = new THREE.MeshStandardMaterial({
+        color: 0x7cfc00,
+        roughness: 0.9,
+        metalness: 0
+      });
+      const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = -0.1; // 略低于其他元素
+      ground.receiveShadow = true;
+      ground.name = 'Ground';
+      scene.add(ground);
 
       // 添加地面（如果没有启用地形）
       if (!enableTerrain) {
@@ -836,10 +863,12 @@ export function VirtualSpace3D({
         const color = metadata?.color as string | undefined;
 
         if (feature.type === 'river') {
-          const path = metadata?.path as THREE.Vector3[] | undefined;
+          const pathData = metadata?.path as Array<{ x: number; y: number; z: number }> | undefined;
           const width = metadata?.width as number ?? 15;
 
-          if (path && path.length > 1) {
+          if (pathData && pathData.length > 1) {
+            // Convert plain objects to THREE.Vector3
+            const path = pathData.map(p => new THREE.Vector3(p.x, p.y, p.z));
             const riverGroup = new THREE.Group();
             for (let i = 0; i < path.length - 1; i++) {
               const segment = geometryGenerator.createWater(width, path[i].distanceTo(path[i + 1]) * 2, 16);
@@ -1334,6 +1363,30 @@ export function VirtualSpace3D({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // 全屏模式下监听 ESC 键
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && externalIsFullscreen && onFullscreenChange) {
+        onFullscreenChange(false);
+      }
+    };
+
+    if (externalIsFullscreen) {
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [externalIsFullscreen, onFullscreenChange]);
+
+  // 全屏模式下触发 resize
+  useEffect(() => {
+    if (externalIsFullscreen && containerRef.current) {
+      // 延迟触发 resize 以确保 DOM 已更新
+      setTimeout(() => {
+        window.dispatchEvent(new Event('resize'));
+      }, 100);
+    }
+  }, [externalIsFullscreen]);
+
   // 处理点击事件和相机定位
   useEffect(() => {
     if (!sceneReady || !rendererRef.current) return;
@@ -1594,7 +1647,9 @@ export function VirtualSpace3D({
   }
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
+    <div className={`bg-white rounded-xl border border-gray-200 transition-all duration-300 ${
+      externalIsFullscreen ? 'fixed inset-0 z-50 rounded-none border-0 bg-gray-900' : 'p-6'
+    }`}>
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">3D 虚拟空间</h2>
@@ -1641,6 +1696,23 @@ export function VirtualSpace3D({
               第一人称
             </button>
           </div>
+
+          {/* 全屏按钮 */}
+          <button
+            onClick={toggleFullscreen}
+            className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors text-gray-600"
+            title={externalIsFullscreen ? '退出全屏 (ESC)' : '全屏显示'}
+          >
+            {externalIsFullscreen ? (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+              </svg>
+            )}
+          </button>
         </div>
           <div className="text-xs text-gray-500">
             {sceneReady ? '🖱️ 拖动旋转 | 滚轮缩放' : '⏳ 加载中...'}
@@ -1650,8 +1722,8 @@ export function VirtualSpace3D({
       {/* 3D 渲染区域 */}
       <div
         ref={containerRef}
-        className="relative w-full h-96 rounded-lg border border-gray-200 overflow-hidden"
-        style={{ minHeight: '384px' }}
+        className="relative w-full rounded-lg border border-gray-200 overflow-hidden"
+        style={{ height: externalIsFullscreen ? '100%' : '600px' }}
       >
         {!sceneReady && !webGLError && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-100 z-10">
@@ -1669,8 +1741,9 @@ export function VirtualSpace3D({
         )}
       </div>
 
-      {/* Agent 列表 */}
-      <div className="mt-4 grid grid-cols-5 gap-2">
+      {/* Agent 列表 - 全屏模式下隐藏 */}
+      {!externalIsFullscreen && (
+        <div className="mt-4 grid grid-cols-5 gap-2">
         {agents.map(agent => {
           const moodColor = moodColors[agent.mood] || '#6b7280';
           return (
@@ -1696,10 +1769,11 @@ export function VirtualSpace3D({
             </button>
           );
         })}
-      </div>
+        </div>
+      )}
 
-      {/* 操作提示 */}
-      {sceneReady && (
+      {/* 操作提示 - 全屏模式下隐藏 */}
+      {sceneReady && !externalIsFullscreen && (
         <div className="mt-2 text-xs text-gray-500 flex items-center justify-between">
           <span>
             💡 左键拖动旋转 | 右键拖动平移 | 滚轮缩放
@@ -1710,6 +1784,65 @@ export function VirtualSpace3D({
             {viewMode === 'second-person' && '🎮 第二人称视角'}
             {viewMode === 'third-person' && '🎮 第三人称视角'}
           </span>
+        </div>
+      )}
+
+      {/* 全屏模式控制栏 */}
+      {externalIsFullscreen && (
+        <div className="absolute top-4 left-4 right-4 z-10 flex items-center justify-between">
+          <div className="bg-black/50 backdrop-blur-sm rounded-lg px-4 py-2 text-white">
+            <div className="text-sm font-medium">3D 虚拟空间 - 北京地图</div>
+            <div className="text-xs opacity-80">{agents.length} 个 Agent | {buildings.length} 个建筑</div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* 视角切换 */}
+            <div className="bg-black/50 backdrop-blur-sm rounded-lg p-1 flex items-center gap-1">
+              <button
+                onClick={() => setCurrentViewMode('third-person')}
+                className={`px-3 py-1 text-xs rounded-md transition-all ${
+                  viewMode === 'third-person'
+                    ? 'bg-white/20 text-white'
+                    : 'text-white/70 hover:text-white'
+                }`}
+              >
+                第三人称
+              </button>
+              <button
+                onClick={() => setCurrentViewMode('second-person')}
+                className={`px-3 py-1 text-xs rounded-md transition-all ${
+                  viewMode === 'second-person'
+                    ? 'bg-white/20 text-white'
+                    : 'text-white/70 hover:text-white'
+                }`}
+                disabled={!selectedAgent}
+              >
+                第二人称
+              </button>
+              <button
+                onClick={() => setCurrentViewMode('first-person')}
+                className={`px-3 py-1 text-xs rounded-md transition-all ${
+                  viewMode === 'first-person'
+                    ? 'bg-white/20 text-white'
+                    : 'text-white/70 hover:text-white'
+                }`}
+                disabled={!selectedAgent}
+              >
+                第一人称
+              </button>
+            </div>
+
+            {/* 退出全屏按钮 */}
+            <button
+              onClick={toggleFullscreen}
+              className="bg-black/50 backdrop-blur-sm rounded-lg px-4 py-2 text-white hover:bg-black/70 transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              退出全屏 (ESC)
+            </button>
+          </div>
         </div>
       )}
     </div>

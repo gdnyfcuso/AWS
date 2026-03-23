@@ -129,17 +129,17 @@ export class MapCoordinateSystem {
     const latOffset = lat - this.config.centerPoint.lat;
     const lngOffset = lng - this.config.centerPoint.lng;
 
-    // 纬度每度约等于111km，经度每度约等于111km * cos(纬度)
-    const latDegreesToUnits = 111000 / this.config.virtualMap.size; // 米/单位
-    const lngDegreesToUnits = 111000 * Math.cos(this.config.centerPoint.lat * Math.PI / 180) / this.config.virtualMap.size;
+    // 简化坐标转换：直接使用度数偏移乘以缩放因子
+    // 北京范围约 1.65° 经度 x 1.65° 纬度，映射到 1000x1000 单位
+    const degreesPerUnit = 1.65 / this.config.virtualMap.size; // 每单位对应的度数
 
     // 应用缩放级别
     const scale = this.currentZoom.scale;
 
     return {
-      x: (lngOffset / lngDegreesToUnits) * scale,
+      x: (lngOffset / degreesPerUnit) * scale,
       y: y,
-      z: -(latOffset / latDegreesToUnits) * scale, // Z轴负方向为北
+      z: -(latOffset / degreesPerUnit) * scale, // Z轴负方向为北
     };
   }
 
@@ -152,13 +152,12 @@ export class MapCoordinateSystem {
   virtualToReal(x: number, z: number): GeoCoordinates {
     const scale = this.currentZoom.scale;
 
-    // 纬度每度约等于111km，经度每度约等于111km * cos(纬度)
-    const latDegreesToUnits = 111000 / this.config.virtualMap.size;
-    const lngDegreesToUnits = 111000 * Math.cos(this.config.centerPoint.lat * Math.PI / 180) / this.config.virtualMap.size;
+    // 简化坐标转换：使用度数偏移
+    const degreesPerUnit = 1.65 / this.config.virtualMap.size;
 
     // 计算偏移
-    const lngOffset = (x / scale) * lngDegreesToUnits;
-    const latOffset = -(z / scale) * latDegreesToUnits; // Z轴负方向为北
+    const lngOffset = (x / scale) * degreesPerUnit;
+    const latOffset = -(z / scale) * degreesPerUnit; // Z轴负方向为北
 
     return {
       lat: this.config.centerPoint.lat + latOffset,
