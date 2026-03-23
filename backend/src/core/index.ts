@@ -13,3 +13,7 @@ export { MapCoordinateSystem, mapCoordinateSystem, ZOOM_LEVELS, BEIJING_LANDMARK
 export { TerrainSystem } from './TerrainSystem';
 export { RoadNetwork } from './RoadNetwork';
 export { VehicleSystem } from './VehicleSystem';
+
+// 城市级地形系统
+export { CityTerrainSystem, cityTerrainSystem } from './CityTerrainSystem';
+export type { TerrainData, ElevationPoint } from './CityTerrainSystem';

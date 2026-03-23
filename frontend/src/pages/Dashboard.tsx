@@ -12,6 +12,7 @@ import { useWorldMap } from '../hooks/useWorldMap';
 import { useAgentRelationships } from '../hooks/useAgentRelationships';
 import { useRealWorldAgents } from '../hooks/useRealWorldAgents';
 import { useTerrainData } from '../hooks/useTerrainData';
+import { useCityTerrainByAgent } from '../hooks/useCityTerrain';
 import { useRoadNetwork } from '../hooks/useRoadNetwork';
 import { useVehicles } from '../hooks/useVehicles';
 import { useEffect, useState } from 'react';
@@ -27,16 +28,33 @@ export function Dashboard() {
   const { nodes, edges } = useAgentRelationships();
   const { agents: geographicAgents, isLoading: isLoadingGeo } = useRealWorldAgents();
 
-  // 3D虚拟空间数据
-  const { data: terrainData } = useTerrainData(true);
-  const { data: roadNetworkData } = useRoadNetwork(true);
-  const { vehicles } = useVehicles(true);
-
   const [debugInfo, setDebugInfo] = useState('');
   const [viewMode, setViewMode] = useState<MainViewMode>('realworld-map');
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [cameraViewMode, setCameraViewMode] = useState<CameraViewMode>('third-person');
   const [is3DFullscreen, setIs3DFullscreen] = useState(false);
+
+  // 3D虚拟空间数据 - 使用城市级地形加载
+  // 优先使用选中 Agent 的城市，如果没有选中则使用第一个 Agent
+  const terrainAgentId = selectedAgentId || geographicAgents[0]?.agent_id || null;
+  const { data: cityTerrainData, loading: cityTerrainLoading } = useCityTerrainByAgent(terrainAgentId, {
+    enabled: !!terrainAgentId,
+    refreshInterval: 30000,
+  });
+
+  // 回退到默认地形数据
+  const { data: defaultTerrainData } = useTerrainData(!cityTerrainData.city && !cityTerrainLoading);
+
+  // 使用城市地形数据，如果没有则使用默认地形数据
+  const terrainData = cityTerrainData.city ? {
+    mountains: cityTerrainData.mountains,
+    hills: cityTerrainData.hills,
+    rivers: cityTerrainData.rivers,
+    plains: cityTerrainData.plains,
+  } : defaultTerrainData;
+
+  const { data: roadNetworkData } = useRoadNetwork(true);
+  const { vehicles } = useVehicles(true);
 
   // 调试信息
   useEffect(() => {
@@ -208,9 +226,26 @@ export function Dashboard() {
           )}
 
           {viewMode === 'virtual-3d' && (
-            <div className={`relative bg-gray-900 rounded-xl overflow-hidden border border-gray-300 transition-all duration-300 ${
-              is3DFullscreen ? 'fixed inset-0 z-50 rounded-none border-0' : ''
-            }`} style={is3DFullscreen ? {} : { height: '70vh' }}>
+            <div className="relative bg-gray-900 rounded-xl overflow-hidden border border-gray-300" style={{ height: '70vh' }}>
+              {/* 当前城市信息显示 */}
+              {cityTerrainData.city && (
+                <div className="absolute top-4 left-4 z-10 bg-black/60 text-white px-4 py-2 rounded-lg backdrop-blur-sm">
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm">
+                      <span className="font-medium">{cityTerrainData.city.name}</span>
+                      {cityTerrainData.city.province && <span className="text-gray-300">, {cityTerrainData.city.province}</span>}
+                    </span>
+                    {selectedAgentId && (
+                      <span className="text-xs text-gray-300">
+                        (Agent: {selectedAgentId})
+                      </span>
+                    )}
+                  </div>
+                  {cityTerrainLoading && (
+                    <div className="mt-1 text-xs text-gray-400">加载地形数据...</div>
+                  )}
+                </div>
+              )}
               <VirtualSpace3D
                 agents={displayAgents}
                 buildings={virtualBuildings}

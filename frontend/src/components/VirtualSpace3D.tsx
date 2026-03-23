@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 // @ts-ignore - OrbitControls import
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createPortal } from 'react-dom';
 import { getApiUrl } from '../utils/api';
 import { TerrainFeatureData } from './TerrainRenderer';
 import { RoadData, IntersectionData } from './RoadRenderer';
@@ -297,6 +298,11 @@ export function VirtualSpace3D({
   const agentTargetPositionsRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
   // 存储 Agent 是否正在移动
   const agentIsMovingRef = useRef<Map<string, boolean>>(new Map());
+
+  // 键盘控制状态
+  const keysPressedRef = useRef<Set<string>>(new Set());
+  // Agent 跳跃物理状态: velocityY (Y轴速度), isJumping (是否跳跃中), groundY (地面高度)
+  const agentPhysicsRef = useRef<Map<string, { velocityY: number; isJumping: boolean; groundY: number }>>(new Map());
   // 当前视角模式
   const [currentViewMode, setCurrentViewMode] = useState<ViewMode>('third-person');
   // 使用 ref 存储最新的视角模式，避免闭包陷阱
@@ -314,6 +320,10 @@ export function VirtualSpace3D({
   // 全屏切换函数
   const toggleFullscreen = () => {
     const newFullscreenState = !externalIsFullscreen;
+    console.log('toggleFullscreen called:', {
+      current: externalIsFullscreen,
+      new: newFullscreenState
+    });
     if (onFullscreenChange) {
       onFullscreenChange(newFullscreenState);
     }
@@ -323,6 +333,59 @@ export function VirtualSpace3D({
   useEffect(() => {
     viewModeRef.current = viewMode;
   }, [viewMode]);
+
+  // 全屏模式下监听 ESC 键退出
+  useEffect(() => {
+    if (!externalIsFullscreen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        console.log('ESC pressed, exiting fullscreen');
+        if (onFullscreenChange) {
+          onFullscreenChange(false);
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [externalIsFullscreen, onFullscreenChange]);
+
+  // 键盘控制 - Agent 移动和跳跃
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 阻止方向键和空格键的默认滚动行为
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
+        e.preventDefault();
+      }
+      keysPressedRef.current.add(e.key);
+
+      // 空格键跳跃
+      if (e.key === ' ' && selectedAgentId) {
+        const physics = agentPhysicsRef.current.get(selectedAgentId);
+        if (physics && !physics.isJumping) {
+          // 开始跳跃
+          agentPhysicsRef.current.set(selectedAgentId, {
+            ...physics,
+            velocityY: 15, // 初始跳跃速度
+            isJumping: true,
+          });
+        }
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      keysPressedRef.current.delete(e.key);
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [selectedAgentId]);
 
   // 检查 WebGL 支持
   useEffect(() => {
@@ -677,6 +740,20 @@ export function VirtualSpace3D({
       };
       agentGroup.add(label);
 
+      // 添加选中指示环（Selection Ring）
+      const ringGeometry = new THREE.RingGeometry(3.5, 4, 32);
+      const ringMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00ff00,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0
+      });
+      const selectionRing = new THREE.Mesh(ringGeometry, ringMaterial);
+      selectionRing.rotation.x = -Math.PI / 2; // 水平放置
+      selectionRing.position.y = -0.9; // 在脚下
+      selectionRing.userData = { isSelectionRing: true };
+      agentGroup.add(selectionRing);
+
       // Agent 数据存储（用于动画和交互）
       agentGroup.userData = {
         agentId: agent.agent_id,
@@ -712,6 +789,50 @@ export function VirtualSpace3D({
     });
 
   }, [agents, sceneReady]);
+
+  // 更新选中状态的视觉效果
+  useEffect(() => {
+    if (!agentMeshesRef.current || !sceneReady) return;
+
+    agentMeshesRef.current.children.forEach(agentGroup => {
+      if (agentGroup instanceof THREE.Group) {
+        const agentId = agentGroup.userData.agentId;
+        const isSelected = agentId === selectedAgentId;
+
+        // 更新选中环
+        agentGroup.children.forEach(child => {
+          if (child.userData.isSelectionRing && child instanceof THREE.Mesh) {
+            if (isSelected) {
+              child.material.opacity = 0.8;
+              // 添加旋转动画
+              const animateRing = () => {
+                if (agentId === selectedAgentId) {
+                  child.rotation.z += 0.02;
+                  requestAnimationFrame(animateRing);
+                }
+              };
+              animateRing();
+            } else {
+              child.material.opacity = 0;
+            }
+          }
+        });
+
+        // 更新选中 Agent 的发光效果
+        agentGroup.children.forEach(child => {
+          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
+            if (isSelected) {
+              child.material.emissive = new THREE.Color(0x00ff00);
+              child.material.emissiveIntensity = 0.2;
+            } else {
+              child.material.emissive = new THREE.Color(0x000000);
+              child.material.emissiveIntensity = 0;
+            }
+          }
+        });
+      }
+    });
+  }, [selectedAgentId, sceneReady]);
 
   // 轮询更新 Agent 位置
   useEffect(() => {
@@ -1204,15 +1325,49 @@ export function VirtualSpace3D({
         agentMeshesRef.current.children.forEach(agentGroup => {
           if (agentGroup instanceof THREE.Group && agentGroup.userData.parts) {
             const parts = agentGroup.userData.parts;
+            const agentId = agentGroup.userData.agentId;
+            const isSelected = agentId === selectedAgentId;
+
+            // 初始化物理状态
+            if (agentId && !agentPhysicsRef.current.has(agentId)) {
+              agentPhysicsRef.current.set(agentId, {
+                velocityY: 0,
+                isJumping: false,
+                groundY: agentGroup.position.y,
+              });
+            }
+
+            // 键盘控制的移动速度
+            const moveSpeed = 0.8;
+            let keyboardMoveX = 0;
+            let keyboardMoveZ = 0;
+
+            // 如果是选中的 Agent，响应键盘输入
+            if (isSelected) {
+              if (keysPressedRef.current.has('ArrowUp')) keyboardMoveZ -= moveSpeed;
+              if (keysPressedRef.current.has('ArrowDown')) keyboardMoveZ += moveSpeed;
+              if (keysPressedRef.current.has('ArrowLeft')) keyboardMoveX -= moveSpeed;
+              if (keysPressedRef.current.has('ArrowRight')) keyboardMoveX += moveSpeed;
+
+              // 更新目标位置以响应键盘控制
+              if (keyboardMoveX !== 0 || keyboardMoveZ !== 0) {
+                const currentPos = agentGroup.position;
+                const newTargetPos = {
+                  x: currentPos.x + keyboardMoveX * 5, // 预测位置
+                  y: currentPos.y,
+                  z: currentPos.z + keyboardMoveZ * 5,
+                };
+                agentTargetPositionsRef.current.set(agentId, newTargetPos);
+              }
+            }
 
             // 平滑移动 Agent 到目标位置
-            const agentId = agentGroup.userData.agentId;
             let isMoving = false;
 
             if (agentId && agentTargetPositionsRef.current.has(agentId)) {
               const targetPos = agentTargetPositionsRef.current.get(agentId)!;
               const currentPos = agentGroup.position;
-              const lerpFactor = 0.02; // 移动速度
+              const lerpFactor = isSelected ? 0.08 : 0.02; // 选中时移动更快
 
               // 计算到目标的距离
               const dx = targetPos.x - currentPos.x;
@@ -1220,7 +1375,7 @@ export function VirtualSpace3D({
               const distance = Math.sqrt(dx * dx + dz * dz);
 
               // 判断是否正在移动
-              isMoving = distance > 1;
+              isMoving = distance > 0.5;
               agentIsMovingRef.current.set(agentId, isMoving);
 
               // 线性插值到目标位置
@@ -1233,15 +1388,44 @@ export function VirtualSpace3D({
                 agentGroup.rotation.y = THREE.MathUtils.lerp(
                   agentGroup.rotation.y,
                   targetAngle,
-                  0.1
+                  0.15
                 );
+              }
+            }
+
+            // 跳跃物理模拟
+            if (agentId && agentPhysicsRef.current.has(agentId)) {
+              const physics = agentPhysicsRef.current.get(agentId)!;
+              const gravity = -0.6;
+              const deltaTime = 1/60; // 约60fps
+
+              if (physics.isJumping) {
+                // 应用重力
+                physics.velocityY += gravity;
+                agentGroup.position.y += physics.velocityY * deltaTime;
+
+                // 检查是否落地
+                if (agentGroup.position.y <= physics.groundY) {
+                  agentGroup.position.y = physics.groundY;
+                  physics.velocityY = 0;
+                  physics.isJumping = false;
+                  agentPhysicsRef.current.set(agentId, physics);
+                } else {
+                  // 更新物理状态
+                  agentPhysicsRef.current.set(agentId, physics);
+                }
+              } else {
+                // 确保在地面
+                if (agentGroup.position.y > physics.groundY) {
+                  agentGroup.position.y = physics.groundY;
+                }
               }
             }
 
             // 行走动画 - 只有在移动时才播放
             if (isMoving) {
               // 大幅度的腿部摆动（行走）
-              const walkCycle = Math.sin(time * 8); // 更快的行走频率
+              const walkCycle = Math.sin(time * 10); // 更快的行走频率
               const legSwingAngle = Math.PI / 4; // 45度摆动
 
               if (parts.leftLeg) {
@@ -1263,32 +1447,64 @@ export function VirtualSpace3D({
 
               // 身体轻微上下起伏（行走时）
               if (parts.head) {
-                parts.head.position.y = 6.2 + Math.abs(Math.sin(time * 8)) * 0.15;
+                parts.head.position.y = 6.2 + Math.abs(Math.sin(time * 10)) * 0.2;
               }
             } else {
-              // 静止时的动画
-              // 呼吸动画（头部轻微上下浮动）
-              if (parts.head) {
-                parts.head.position.y = 6.2 + Math.sin(time * 2) * 0.05;
-              }
+              // 静止或跳跃时的动画
+              const physics = agentPhysicsRef.current.get(agentId);
+              const isJumping = physics?.isJumping || false;
 
-              // 腿部回归静止
-              if (parts.leftLeg) {
-                parts.leftLeg.rotation.x = 0;
-              }
-              if (parts.rightLeg) {
-                parts.rightLeg.rotation.x = 0;
-              }
+              if (isJumping) {
+                // 跳跃姿态 - 腿部蜷缩
+                const jumpTuck = 0.3;
+                if (parts.leftLeg) {
+                  parts.leftLeg.rotation.x = jumpTuck;
+                }
+                if (parts.rightLeg) {
+                  parts.rightLeg.rotation.x = jumpTuck;
+                }
 
-              // 手臂轻微摆动
-              const armSwing = Math.sin(time * 2) * 0.05;
-              if (parts.leftArm) {
-                parts.leftArm.rotation.x = armSwing;
-                parts.leftArm.rotation.z = Math.PI / 6 + Math.sin(time * 1.5) * 0.1;
-              }
-              if (parts.rightArm) {
-                parts.rightArm.rotation.x = -armSwing;
-                parts.rightArm.rotation.z = -Math.PI / 6 - Math.sin(time * 1.5) * 0.1;
+                // 手臂向上举起
+                if (parts.leftArm) {
+                  parts.leftArm.rotation.x = -Math.PI / 2;
+                  parts.leftArm.rotation.z = Math.PI / 8;
+                }
+                if (parts.rightArm) {
+                  parts.rightArm.rotation.x = -Math.PI / 2;
+                  parts.rightArm.rotation.z = -Math.PI / 8;
+                }
+
+                // 头部略微上仰
+                if (parts.head) {
+                  parts.head.rotation.x = -0.2;
+                  parts.head.position.y = 6.2;
+                }
+              } else {
+                // 静止时的动画
+                // 呼吸动画（头部轻微上下浮动）
+                if (parts.head) {
+                  parts.head.position.y = 6.2 + Math.sin(time * 2) * 0.05;
+                  parts.head.rotation.x = 0;
+                }
+
+                // 腿部回归静止
+                if (parts.leftLeg) {
+                  parts.leftLeg.rotation.x = 0;
+                }
+                if (parts.rightLeg) {
+                  parts.rightLeg.rotation.x = 0;
+                }
+
+                // 手臂轻微摆动
+                const armSwing = Math.sin(time * 2) * 0.05;
+                if (parts.leftArm) {
+                  parts.leftArm.rotation.x = armSwing;
+                  parts.leftArm.rotation.z = Math.PI / 6 + Math.sin(time * 1.5) * 0.1;
+                }
+                if (parts.rightArm) {
+                  parts.rightArm.rotation.x = -armSwing;
+                  parts.rightArm.rotation.z = -Math.PI / 6 - Math.sin(time * 1.5) * 0.1;
+                }
               }
             }
 
@@ -1646,10 +1862,9 @@ export function VirtualSpace3D({
     );
   }
 
-  return (
-    <div className={`bg-white rounded-xl border border-gray-200 transition-all duration-300 ${
-      externalIsFullscreen ? 'fixed inset-0 z-50 rounded-none border-0 bg-gray-900' : 'p-6'
-    }`}>
+  // 正常视图内容
+  const normalView = (
+    <div className="bg-white rounded-xl border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">3D 虚拟空间</h2>
@@ -1723,7 +1938,7 @@ export function VirtualSpace3D({
       <div
         ref={containerRef}
         className="relative w-full rounded-lg border border-gray-200 overflow-hidden"
-        style={{ height: externalIsFullscreen ? '100%' : '600px' }}
+        style={{ height: '600px' }}
       >
         {!sceneReady && !webGLError && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-100 z-10">
@@ -1736,6 +1951,18 @@ export function VirtualSpace3D({
             <div className="text-center">
               <p className="text-red-600 font-medium">WebGL 不可用</p>
               <p className="text-sm text-gray-500 mt-1">请使用支持硬件加速的浏览器</p>
+            </div>
+          </div>
+        )}
+
+        {/* 键盘控制提示 */}
+        {sceneReady && selectedAgent && (
+          <div className="absolute bottom-4 left-4 z-10 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-3 text-white">
+            <div className="text-sm font-medium mb-2">🎮 键盘控制</div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+              <div>⬆️⬇️⬅️➡️ 移动</div>
+              <div>⎯ 跳跃</div>
+              <div className="col-span-2 text-gray-300">点击 Agent 选中后可控制</div>
             </div>
           </div>
         )}
@@ -1847,4 +2074,122 @@ export function VirtualSpace3D({
       )}
     </div>
   );
+
+  // 全屏视图内容
+  const fullscreenView = (
+    <div className="fixed inset-0 z-[9999] bg-gray-900">
+      {/* 全屏头部控制栏 */}
+      <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between p-4 bg-black/50 backdrop-blur-sm">
+        <div className="text-white">
+          <div className="text-sm font-medium">3D 虚拟空间 - 全屏模式</div>
+          <div className="text-xs opacity-80">{agents.length} 个 Agent | {buildings.length} 个建筑</div>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* 视角切换 */}
+          <div className="bg-white/20 backdrop-blur-sm rounded-lg p-1 flex items-center gap-1">
+            <button
+              onClick={() => setCurrentViewMode('third-person')}
+              className={`px-3 py-1 text-xs rounded-md transition-all ${
+                viewMode === 'third-person'
+                  ? 'bg-white/30 text-white'
+                  : 'text-white/70 hover:text-white'
+              }`}
+            >
+              第三人称
+            </button>
+            <button
+              onClick={() => setCurrentViewMode('second-person')}
+              className={`px-3 py-1 text-xs rounded-md transition-all ${
+                viewMode === 'second-person'
+                  ? 'bg-white/30 text-white'
+                  : 'text-white/70 hover:text-white'
+              }`}
+              disabled={!selectedAgent}
+            >
+              第二人称
+            </button>
+            <button
+              onClick={() => setCurrentViewMode('first-person')}
+              className={`px-3 py-1 text-xs rounded-md transition-all ${
+                viewMode === 'first-person'
+                  ? 'bg-white/30 text-white'
+                  : 'text-white/70 hover:text-white'
+              }`}
+              disabled={!selectedAgent}
+            >
+              第一人称
+            </button>
+          </div>
+          {/* 退出全屏按钮 */}
+          <button
+            onClick={toggleFullscreen}
+            className="bg-white/20 backdrop-blur-sm rounded-lg px-4 py-2 text-white hover:bg-white/30 transition-colors flex items-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            退出全屏 (ESC)
+          </button>
+        </div>
+      </div>
+
+      {/* 3D 渲染区域 - 全屏时填充整个屏幕 */}
+      <div
+        ref={containerRef}
+        className="absolute inset-0 rounded-none border-0 overflow-hidden"
+      >
+        {!sceneReady && !webGLError && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 z-10">
+            <div className="w-8 h-8 border-2 border-white/30 border-t-transparent rounded-full animate-spin mb-3"></div>
+            <p className="text-white">正在初始化 3D 场景...</p>
+          </div>
+        )}
+        {webGLError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-red-900 z-10">
+            <div className="text-center">
+              <p className="text-white font-medium">WebGL 不可用</p>
+              <p className="text-sm text-white/70 mt-1">请使用支持硬件加速的浏览器</p>
+            </div>
+          </div>
+        )}
+
+        {/* 键盘控制提示 - 全屏模式 */}
+        {sceneReady && selectedAgent && (
+          <div className="absolute bottom-8 left-8 z-10 bg-black/70 backdrop-blur-sm rounded-lg px-6 py-4 text-white">
+            <div className="text-base font-medium mb-3">🎮 键盘控制</div>
+            <div className="grid grid-cols-3 gap-x-6 gap-y-2 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">⬆️</span>
+                <span>向上</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">⬇️</span>
+                <span>向下</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">⬅️</span>
+                <span>向左</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">➡️</span>
+                <span>向右</span>
+              </div>
+              <div className="flex items-center gap-2 col-span-2">
+                <span className="text-2xl">⎯</span>
+                <span>跳跃</span>
+              </div>
+            </div>
+            <div className="mt-2 text-xs text-gray-300">当前控制: {agents.find(a => a.agent_id === selectedAgent)?.agent_name || '未知'}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // 根据全屏状态决定渲染方式
+  if (externalIsFullscreen) {
+    return createPortal(fullscreenView, document.body);
+  }
+
+  return normalView;
 }

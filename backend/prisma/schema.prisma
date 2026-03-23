@@ -454,6 +454,10 @@ model TerrainFeature {
   type                String            // 'mountain' | 'hill' | 'water' | 'river' | 'ocean' | 'plain' | 'forest'
   name                String?
 
+  // 城市关联
+  city_id             String?
+  city                City?             @relation(fields: [city_id], references: [id], onDelete: SetNull)
+
   // 空间数据
   position            Json              // {x, y, z}
   size                Json              // {width, height, depth}
@@ -469,6 +473,7 @@ model TerrainFeature {
 
   @@index([type])
   @@index([position])
+  @@index([city_id])
 }
 
 /// 道路表
@@ -504,4 +509,50 @@ model Road {
 
   @@index([type])
   @@index([name])
+}
+
+// ==================== 城市地形系统 ====================
+
+/// 城市配置表
+model City {
+  id                  String            @id @default(cuid())
+  city_id             String            @unique
+
+  // 基本信息
+  name                String            // 中文名称
+  name_en             String?           // 英文名称
+  country             String            @default("中国")
+  province            String?           // 省份
+
+  // 地理边界 (1:1比例配置)
+  min_lat             Float             // 最小纬度
+  max_lat             Float             // 最大纬度
+  min_lng             Float             // 最小经度
+  max_lng             Float             // 最大经度
+
+  // 中心点
+  center_lat          Float
+  center_lng          Float
+
+  // 虚拟空间配置 (1:1比例: 1单位 = 1米)
+  virtual_scale       Float             @default(1.0)
+  virtual_center_x    Float             @default(0)
+  virtual_center_z    Float             @default(0)
+
+  // 地形数据源配置
+  elevation_api       String?           // 'google' | 'opentopography' | 'open_elevation'
+  terrain_source      String            @default("generated") // 'generated' | 'real_data'
+
+  // 地形特征关联
+  terrain_features    TerrainFeature[]
+
+  // 缓存状态
+  terrain_cached      Boolean           @default(false)
+  terrain_cache_date  DateTime?
+
+  created_at          DateTime          @default(now())
+  updated_at          DateTime          @updatedAt
+
+  @@index([name])
+  @@index([country, province])
 }

@@ -7,6 +7,7 @@ import avatarRouter from './avatar';
 import platformRouter from './platform';
 import world3dRouter from './world3d';
 import skillsRouter from './skills';
+import citiesRouter from './citiesRouter';
 
 const router = Router();
 
@@ -17,6 +18,7 @@ router.use('/avatar', avatarRouter);
 router.use('/platform', platformRouter);
 router.use('/world3d', world3dRouter);
 router.use('/skills', skillsRouter);
+router.use('/cities', citiesRouter);
 
 // 健康检查
 router.get('/health', (req, res) => {
