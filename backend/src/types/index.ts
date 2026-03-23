@@ -3,6 +3,9 @@
 export * from './vw_protocol';
 export * from './agent';
 export * from './world';
+export * from './terrain';
+export * from './vehicle';
+export * from './road';
 
 // 通用类型
 export interface ApiResponse<T = unknown> {

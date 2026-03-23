@@ -59,6 +59,10 @@ model Agent {
   skills              Skills?
   avatar              Avatar?
   platform_adapters   PlatformAdapter[]
+
+  // 3D虚拟空间扩展关系
+  owned_vehicles      Vehicle[]        @relation("vehicle_owner")
+  vehicle_interactions VehicleInteraction[] @relation("vehicle_interactions")
 }
 
 model AgentState {
@@ -356,4 +360,148 @@ model PlatformAdapter {
   @@unique([agent_id, platform_type])
   @@index([agent_id])
   @@index([platform_type])
+}
+
+// ==================== 3D虚拟空间扩展 ====================
+
+/// 车辆表
+model Vehicle {
+  id                  String            @id @default(cuid())
+  vehicle_id          String            @unique
+  name                String
+  type                String            // 'car' | 'bus' | 'truck' | 'motorcycle' | 'bicycle' | 'taxi'
+
+  // 位置与姿态
+  position            Json              // {x, y, z}
+  rotation            Float             @default(0)
+  speed               Float             @default(0)
+
+  // 车辆属性
+  capacity            Int               @default(4)
+  max_speed           Float             @default(100)
+  color               String
+  status              String            @default("parked")
+
+  // 关系
+  current_driver_id   String?
+  current_location_id String
+  owner_agent_id      String?
+  owner_agent         Agent?            @relation("vehicle_owner", fields: [owner_agent_id], references: [agent_id], onDelete: SetNull)
+
+  // 车辆状态
+  state               VehicleState?
+  interactions        VehicleInteraction[]
+
+  created_at          DateTime          @default(now())
+  updated_at          DateTime          @updatedAt
+
+  @@index([current_location_id])
+  @@index([owner_agent_id])
+  @@index([status])
+}
+
+/// 车辆状态表
+model VehicleState {
+  id                  String            @id @default(cuid())
+  vehicle_id          String            @unique
+  vehicle             Vehicle           @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: Cascade)
+
+  // 动态状态
+  acceleration        Float             @default(0)
+  steering_angle      Float             @default(0)
+  fuel                Int?              @default(100)
+  health              Int?              @default(100)
+
+  // 导航状态
+  current_road_id     String?
+  destination_id      String?
+  route_data          Json?
+
+  // 统计数据
+  total_distance      Float             @default(0)
+  total_trips         Int               @default(0)
+
+  updated_at          DateTime          @updatedAt
+
+  @@index([vehicle_id])
+}
+
+/// 车辆交互记录表
+model VehicleInteraction {
+  id                  String            @id @default(cuid())
+  vehicle_id          String
+  vehicle             Vehicle           @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: Cascade)
+
+  agent_id            String
+  agent               Agent             @relation("vehicle_interactions", fields: [agent_id], references: [agent_id], onDelete: Cascade)
+
+  interaction_type    String            // 'enter' | 'exit' | 'start' | 'stop' | 'park' | 'drive' | 'collision'
+  result              String?           // 'success' | 'failed'
+
+  data                Json?
+  timestamp           DateTime          @default(now())
+
+  @@index([vehicle_id])
+  @@index([agent_id])
+  @@index([timestamp])
+}
+
+/// 地形特征表
+model TerrainFeature {
+  id                  String            @id @default(cuid())
+  feature_id          String            @unique
+
+  type                String            // 'mountain' | 'hill' | 'water' | 'river' | 'ocean' | 'plain' | 'forest'
+  name                String?
+
+  // 空间数据
+  position            Json              // {x, y, z}
+  size                Json              // {width, height, depth}
+
+  // 真实世界坐标映射
+  real_coordinates    Json?             // {lat, lng}
+
+  // 地形特定属性
+  metadata            Json?
+
+  created_at          DateTime          @default(now())
+  updated_at          DateTime          @updatedAt
+
+  @@index([type])
+  @@index([position])
+}
+
+/// 道路表
+model Road {
+  id                  String            @id @default(cuid())
+  road_id             String            @unique
+
+  name                String
+  name_en             String?
+  type                String            // 'highway' | 'main_road' | 'secondary_road' | 'alley' | 'ring_road'
+
+  // 道路属性
+  width               Float
+  lanes               Int               @default(2)
+  speed_limit         Float
+
+  // 路径数据
+  path                Json              // Array of {x, y, z}
+  length              Float?
+
+  // 拓扑关系
+  is_one_way          Boolean           @default(false)
+  has_lane_markings   Boolean           @default(true)
+  connected_roads     String[]          // road IDs
+
+  // 真实世界坐标映射
+  real_coordinates    Json?             // {start: {lat, lng}, end: {lat, lng}, waypoints: [...]}
+
+  metadata            Json?
+
+  created_at          DateTime          @default(now())
+  updated_at          DateTime          @updatedAt
+
+  @@index([type])
+  @@index([name])
 }

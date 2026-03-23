@@ -1,10 +1,16 @@
 // 3D 虚拟空间查看器 - 使用 Three.js
+// 集成北京地形、道路网络和车辆系统
 
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 // @ts-ignore - OrbitControls import
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { getApiUrl } from '../utils/api';
+import { TerrainFeatureData } from './TerrainRenderer';
+import { RoadData, IntersectionData } from './RoadRenderer';
+import { VehicleData } from './VehicleRenderer';
+import { geometryGenerator } from '../utils/threejs/GeometryGenerator';
+import { materialFactory, CARTOON_COLORS } from '../utils/threejs/MaterialFactory';
 
 interface Agent3D {
   agent_id: string;
@@ -37,10 +43,218 @@ interface VirtualSpace3DProps {
   selectedAgentId?: string | null; // 外部传入选中的 Agent ID
   viewMode?: 'first-person' | 'second-person' | 'third-person'; // 视角模式
   onViewModeChange?: (mode: 'first-person' | 'second-person' | 'third-person') => void;
+  // 新增：地形、道路、车辆数据
+  terrainFeatures?: TerrainFeatureData[];
+  roads?: RoadData[];
+  intersections?: IntersectionData[];
+  vehicles?: VehicleData[];
+  onVehicleClick?: (vehicle: VehicleData) => void;
+  enableTerrain?: boolean;
+  enableRoads?: boolean;
+  enableVehicles?: boolean;
 }
 
 // 视角模式类型
 type ViewMode = 'first-person' | 'second-person' | 'third-person';
+
+// 根据道路类型获取颜色
+function getRoadColor(type: string): number {
+  switch (type) {
+    case 'highway':
+      return 0x2d2d2d;
+    case 'ring_road':
+      return 0x3a3a3a;
+    case 'main_road':
+      return 0x404040;
+    case 'secondary_road':
+      return 0x4a4a4a;
+    case 'alley':
+      return 0x555555;
+    default:
+      return CARTOON_COLORS.road;
+  }
+}
+
+// 添加车道标线
+function addLaneMarkings(
+  group: THREE.Group,
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+  width: number,
+  lanes: number,
+  angle: number
+): void {
+  const lineWidth = 0.3;
+  const lineLength = 3;
+
+  for (let i = 1; i < lanes; i++) {
+    const offset = -width / 2 + (width / lanes) * i;
+
+    const segments = Math.ceil(start.distanceTo(end) / lineLength);
+    for (let j = 0; j < segments; j += 2) {
+      const t = j / segments;
+      const nextT = Math.min((j + 1) / segments, 1);
+
+      const lineStart = new THREE.Vector3().lerpVectors(start, end, t);
+      const lineEnd = new THREE.Vector3().lerpVectors(start, end, nextT);
+
+      const lineGeometry = new THREE.PlaneGeometry(lineWidth, lineStart.distanceTo(lineEnd));
+      const lineMaterial = new THREE.MeshBasicMaterial({ color: CARTOON_COLORS.road_line });
+      const lineMesh = new THREE.Mesh(lineGeometry, lineMaterial);
+
+      const midX = (lineStart.x + lineEnd.x) / 2;
+      const midZ = (lineStart.z + lineEnd.z) / 2;
+
+      lineMesh.position.set(midX, 0.16, midZ);
+      lineMesh.position.x += offset * Math.cos(angle);
+      lineMesh.position.z -= offset * Math.sin(angle);
+      lineMesh.rotation.x = -Math.PI / 2;
+      lineMesh.rotation.z = angle;
+
+      group.add(lineMesh);
+    }
+  }
+}
+
+// 添加边缘线
+function addEdgeMarkings(
+  group: THREE.Group,
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+  width: number,
+  angle: number
+): void {
+  const lineMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const lineWidth = 0.4;
+
+  const lineGeometry = new THREE.PlaneGeometry(lineWidth, start.distanceTo(end));
+
+  // 左边缘
+  const leftLine = new THREE.Mesh(lineGeometry, lineMaterial.clone());
+  const midX = (start.x + end.x) / 2;
+  const midZ = (start.z + end.z) / 2;
+
+  leftLine.position.set(midX, 0.16, midZ);
+  leftLine.position.x += (width / 2) * Math.cos(angle);
+  leftLine.position.z -= (width / 2) * Math.sin(angle);
+  leftLine.rotation.x = -Math.PI / 2;
+  leftLine.rotation.z = angle;
+  group.add(leftLine);
+
+  // 右边缘
+  const rightLine = new THREE.Mesh(lineGeometry, lineMaterial.clone());
+  rightLine.position.set(midX, 0.16, midZ);
+  rightLine.position.x -= (width / 2) * Math.cos(angle);
+  rightLine.position.z += (width / 2) * Math.sin(angle);
+  rightLine.rotation.x = -Math.PI / 2;
+  rightLine.rotation.z = angle;
+  group.add(rightLine);
+}
+
+// 车辆类型配置
+const VEHICLE_TYPE_CONFIGS: Record<string, {
+  bodyShape: 'box' | 'rounded' | 'sedan' | 'suv';
+  size: { length: number; width: number; height: number };
+  hasRoof: boolean;
+  windowConfig: { front: boolean; rear: boolean; sides: boolean };
+  wheelPositions: THREE.Vector3[];
+}> = {
+  car: {
+    bodyShape: 'sedan',
+    size: { length: 8, width: 4, height: 3 },
+    hasRoof: true,
+    windowConfig: { front: true, rear: true, sides: true },
+    wheelPositions: [
+      new THREE.Vector3(-3, -1, 2),
+      new THREE.Vector3(3, -1, 2),
+      new THREE.Vector3(-3, -1, -2),
+      new THREE.Vector3(3, -1, -2),
+    ],
+  },
+  bus: {
+    bodyShape: 'box',
+    size: { length: 16, width: 5, height: 5 },
+    hasRoof: true,
+    windowConfig: { front: true, rear: true, sides: true },
+    wheelPositions: [
+      new THREE.Vector3(-5, -1, 2),
+      new THREE.Vector3(5, -1, 2),
+      new THREE.Vector3(-5, -1, -2),
+      new THREE.Vector3(5, -1, -2),
+    ],
+  },
+  truck: {
+    bodyShape: 'box',
+    size: { length: 14, width: 5, height: 6 },
+    hasRoof: true,
+    windowConfig: { front: true, rear: false, sides: true },
+    wheelPositions: [
+      new THREE.Vector3(-4, -1, 2),
+      new THREE.Vector3(4, -1, 2),
+      new THREE.Vector3(-4, -1, -2),
+      new THREE.Vector3(4, -1, -2),
+    ],
+  },
+  motorcycle: {
+    bodyShape: 'rounded',
+    size: { length: 4, width: 1.5, height: 2 },
+    hasRoof: false,
+    windowConfig: { front: false, rear: false, sides: false },
+    wheelPositions: [
+      new THREE.Vector3(-1.5, -0.5, 0),
+      new THREE.Vector3(1.5, -0.5, 0),
+    ],
+  },
+  bicycle: {
+    bodyShape: 'rounded',
+    size: { length: 3, width: 1, height: 2 },
+    hasRoof: false,
+    windowConfig: { front: false, rear: false, sides: false },
+    wheelPositions: [
+      new THREE.Vector3(-1, -0.5, 0),
+      new THREE.Vector3(1, -0.5, 0),
+    ],
+  },
+  taxi: {
+    bodyShape: 'sedan',
+    size: { length: 8, width: 4, height: 3 },
+    hasRoof: true,
+    windowConfig: { front: true, rear: true, sides: true },
+    wheelPositions: [
+      new THREE.Vector3(-3, -1, 2),
+      new THREE.Vector3(3, -1, 2),
+      new THREE.Vector3(-3, -1, -2),
+      new THREE.Vector3(3, -1, -2),
+    ],
+  },
+};
+
+// 创建车辆网格
+function createVehicleMesh(vehicle: VehicleData): THREE.Group | null {
+  const typeConfig = VEHICLE_TYPE_CONFIGS[vehicle.type];
+  if (!typeConfig) return null;
+
+  const vehicleGroup = geometryGenerator.createVehicle({
+    type: vehicle.type,
+    bodyShape: typeConfig.bodyShape,
+    size: typeConfig.size,
+    hasRoof: typeConfig.hasRoof,
+    windowConfig: typeConfig.windowConfig,
+    wheelPositions: typeConfig.wheelPositions,
+    color: vehicle.color,
+  });
+
+  vehicleGroup.position.set(vehicle.position.x, vehicle.position.y, vehicle.position.z);
+  vehicleGroup.rotation.y = vehicle.rotation;
+
+  vehicleGroup.name = vehicle.name || `Vehicle_${vehicle.vehicle_id}`;
+  vehicleGroup.castShadow = true;
+  vehicleGroup.receiveShadow = true;
+
+  vehicleGroup.userData = { vehicle };
+
+  return vehicleGroup;
+}
 
 const moodColors: Record<string, string> = {
   happy: '#22c55e',
@@ -57,7 +271,15 @@ export function VirtualSpace3D({
   onAgentClick,
   selectedAgentId,
   viewMode: externalViewMode,
-  onViewModeChange
+  onViewModeChange,
+  terrainFeatures = [],
+  roads = [],
+  intersections = [],
+  vehicles = [],
+  onVehicleClick,
+  enableTerrain = true,
+  enableRoads = true,
+  enableVehicles = true,
 }: VirtualSpace3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -72,6 +294,8 @@ export function VirtualSpace3D({
   const agentIsMovingRef = useRef<Map<string, boolean>>(new Map());
   // 当前视角模式
   const [currentViewMode, setCurrentViewMode] = useState<ViewMode>('third-person');
+  // 使用 ref 存储最新的视角模式，避免闭包陷阱
+  const viewModeRef = useRef<ViewMode>(externalViewMode || 'third-person');
   // 当前追踪的 Agent（用于第一/第二人称视角）
   const trackedAgentRef = useRef<string | null>(null);
   const [webGLError, setWebGLError] = useState(false);
@@ -81,6 +305,11 @@ export function VirtualSpace3D({
 
   // 使用外部传入的视角模式，如果没有则使用内部状态
   const viewMode = externalViewMode || currentViewMode;
+
+  // 更新 viewModeRef 以保持最新值
+  useEffect(() => {
+    viewModeRef.current = viewMode;
+  }, [viewMode]);
 
   // 检查 WebGL 支持
   useEffect(() => {
@@ -126,13 +355,13 @@ export function VirtualSpace3D({
       // 创建场景
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(0x87CEEB); // 天空蓝
-      scene.fog = new THREE.Fog(0x87CEEB, 100, 500);
+      scene.fog = new THREE.Fog(0x87CEEB, 100, 800); // 扩大雾效范围
       sceneRef.current = scene;
 
-      // 创建相机 - 调整位置让Agent看起来更大
-      const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
-      camera.position.set(40, 30, 40); // 更接近场景
-      camera.lookAt(0, 2, 0); // 稍微抬高视角中心
+      // 创建相机 - 调整为适合大地图的位置
+      const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 2000);
+      camera.position.set(200, 150, 200); // 适应更大地图
+      camera.lookAt(0, 0, 0);
       cameraRef.current = camera;
 
       // 创建渲染器
@@ -155,43 +384,60 @@ export function VirtualSpace3D({
       controls.dampingFactor = 0.05;
       controls.autoRotate = false;
       controls.maxPolarAngle = Math.PI / 2 - 0.1; // 限制不能钻到地下
-      controls.minDistance = 15; // 可以更接近
-      controls.maxDistance = 150; // 缩小最大距离
-      controls.target.set(0, 2, 0); // 设置旋转中心点在Agent高度
+      controls.minDistance = 30; // 调整最小距离
+      controls.maxDistance = 500; // 扩大最大距离
+      controls.target.set(0, 0, 0); // 设置旋转中心点
       controlsRef.current = controls;
 
-      // 添加光源
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+      // 添加光源 - 扩大光照范围
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
       scene.add(ambientLight);
 
       const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-      directionalLight.position.set(50, 100, 50);
+      directionalLight.position.set(200, 300, 200);
       directionalLight.castShadow = true;
-      directionalLight.shadow.mapSize.width = 2048;
-      directionalLight.shadow.mapSize.height = 2048;
-      directionalLight.shadow.camera.near = 0.5;
-      directionalLight.shadow.camera.far = 500;
-      directionalLight.shadow.camera.left = -100;
-      directionalLight.shadow.camera.right = 100;
-      directionalLight.shadow.camera.top = 100;
-      directionalLight.shadow.camera.bottom = -100;
+      directionalLight.shadow.mapSize.width = 4096;
+      directionalLight.shadow.mapSize.height = 4096;
+      directionalLight.shadow.camera.near = 1;
+      directionalLight.shadow.camera.far = 1000;
+      directionalLight.shadow.camera.left = -500;
+      directionalLight.shadow.camera.right = 500;
+      directionalLight.shadow.camera.top = 500;
+      directionalLight.shadow.camera.bottom = -500;
       scene.add(directionalLight);
 
-      // 添加地面
-      const groundGeometry = new THREE.PlaneGeometry(200, 200);
-      const groundMaterial = new THREE.MeshStandardMaterial({
-        color: 0x7cfc00,
-        roughness: 0.8
-      });
-      const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-      ground.rotation.x = -Math.PI / 2;
-      ground.receiveShadow = true;
-      scene.add(ground);
+      // 添加半球光（天空和地面反射）
+      const hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x7cfc00, 0.4);
+      scene.add(hemiLight);
 
-      // 添加网格辅助线
-      const gridHelper = new THREE.GridHelper(200, 20, 0x000000, 0x444444);
-      gridHelper.position.y = 0.1;
-      scene.add(gridHelper);
+      // 创建渲染层组
+      const terrainGroup = new THREE.Group();
+      terrainGroup.name = 'TerrainGroup';
+      scene.add(terrainGroup);
+      (sceneRef.current as any).terrainGroup = terrainGroup;
+
+      const roadsGroup = new THREE.Group();
+      roadsGroup.name = 'RoadsGroup';
+      scene.add(roadsGroup);
+      (sceneRef.current as any).roadsGroup = roadsGroup;
+
+      const vehiclesGroup = new THREE.Group();
+      vehiclesGroup.name = 'VehiclesGroup';
+      scene.add(vehiclesGroup);
+      (sceneRef.current as any).vehiclesGroup = vehiclesGroup;
+
+      // 添加地面（如果没有启用地形）
+      if (!enableTerrain) {
+        const groundGeometry = new THREE.PlaneGeometry(1000, 1000);
+        const groundMaterial = new THREE.MeshStandardMaterial({
+          color: 0x7cfc00,
+          roughness: 0.8
+        });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+      }
 
       // 添加 Agent 组
       agentMeshesRef.current = new THREE.Group();
@@ -214,7 +460,7 @@ export function VirtualSpace3D({
         rendererRef.current = null;
       }
     };
-  }, []); // 空依赖数组，只运行一次
+  }, [enableTerrain]); // 添加 enableTerrain 依赖
 
   // 更新 Agent 显示
   useEffect(() => {
@@ -460,18 +706,6 @@ export function VirtualSpace3D({
             z: agent.z
           });
         });
-
-        // 同时更新 liveAgents 状态
-        setLiveAgents(data.agents.map((agent: any) => ({
-          agent_id: agent.agent_id,
-          agent_name: agent.agent_name,
-          x: agent.x,
-          y: agent.y,
-          z: agent.z,
-          energy: agent.energy,
-          mood: agent.mood,
-          status: agent.status,
-        })));
       } catch (error) {
         console.error('Error polling agent positions:', error);
       }
@@ -536,6 +770,252 @@ export function VirtualSpace3D({
 
   }, [buildings, sceneReady]);
 
+  // 渲染地形
+  useEffect(() => {
+    if (!sceneReady || !sceneRef.current || !enableTerrain) return;
+
+    const terrainGroup = (sceneRef.current as any).terrainGroup as THREE.Group;
+    if (!terrainGroup) return;
+
+    // 清空现有地形
+    while (terrainGroup.children.length > 0) {
+      const child = terrainGroup.children[0];
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        if (child.material instanceof THREE.Material) {
+          child.material.dispose();
+        }
+      }
+      terrainGroup.remove(child);
+    }
+
+    // 渲染地形特征
+    terrainFeatures.forEach(feature => {
+      let mesh: THREE.Object3D | null = null;
+
+      if (feature.type === 'mountain') {
+        const metadata = feature.metadata as Record<string, unknown> | undefined;
+        const hasSnowCap = metadata?.hasSnowCap as boolean ?? false;
+        const snowCapHeight = metadata?.snowCapHeight as number ?? 50;
+        const roughness = metadata?.roughness as number ?? 0.7;
+        const color = metadata?.color as string | undefined;
+
+        mesh = geometryGenerator.createMountain({
+          height: feature.size.height,
+          baseRadius: feature.size.width / 2,
+          segments: 8,
+          hasSnowCap,
+          snowCapHeight,
+          roughness,
+        });
+
+        if (color) {
+          mesh.traverse((child) => {
+            if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
+              if (!hasSnowCap || child.position.y < feature.size.height - snowCapHeight) {
+                child.material.color.set(color);
+              }
+            }
+          });
+        }
+      } else if (feature.type === 'hill') {
+        const metadata = feature.metadata as Record<string, unknown> | undefined;
+        const color = metadata?.color as string | undefined;
+
+        mesh = geometryGenerator.createHill(
+          feature.size.height,
+          feature.size.width / 2
+        );
+
+        if (color && mesh instanceof THREE.Mesh && mesh.material instanceof THREE.MeshStandardMaterial) {
+          mesh.material.color.set(color);
+        }
+      } else if (feature.type === 'water' || feature.type === 'river') {
+        const metadata = feature.metadata as Record<string, unknown> | undefined;
+        const transparency = metadata?.transparency as number ?? 0.7;
+        const color = metadata?.color as string | undefined;
+
+        if (feature.type === 'river') {
+          const path = metadata?.path as THREE.Vector3[] | undefined;
+          const width = metadata?.width as number ?? 15;
+
+          if (path && path.length > 1) {
+            const riverGroup = new THREE.Group();
+            for (let i = 0; i < path.length - 1; i++) {
+              const segment = geometryGenerator.createWater(width, path[i].distanceTo(path[i + 1]) * 2, 16);
+              if (color) {
+                (segment.material as THREE.MeshStandardMaterial).color.set(color);
+              }
+              (segment.material as THREE.MeshStandardMaterial).opacity = transparency;
+
+              const midX = (path[i].x + path[i + 1].x) / 2;
+              const midZ = (path[i].z + path[i + 1].z) / 2;
+              segment.position.set(midX, 0.5, midZ);
+              const angle = Math.atan2(path[i + 1].z - path[i].z, path[i + 1].x - path[i].x);
+              segment.rotation.y = angle;
+              riverGroup.add(segment);
+            }
+            mesh = riverGroup;
+          }
+        }
+
+        if (!mesh) {
+          mesh = geometryGenerator.createWater(feature.size.width, feature.size.depth, 32);
+          if (mesh instanceof THREE.Mesh) {
+            if (color) {
+              (mesh.material as THREE.MeshStandardMaterial).color.set(color);
+            }
+            (mesh.material as THREE.MeshStandardMaterial).opacity = transparency;
+          }
+        }
+      }
+
+      if (mesh) {
+        mesh.position.set(feature.position.x, feature.position.y, feature.position.z);
+        mesh.name = feature.name || `Terrain_${feature.id}`;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        terrainGroup.add(mesh);
+      }
+    });
+
+  }, [terrainFeatures, sceneReady, enableTerrain]);
+
+  // 渲染道路
+  useEffect(() => {
+    if (!sceneReady || !sceneRef.current || !enableRoads) return;
+
+    const roadsGroup = (sceneRef.current as any).roadsGroup as THREE.Group;
+    if (!roadsGroup) return;
+
+    // 清空现有道路
+    while (roadsGroup.children.length > 0) {
+      const child = roadsGroup.children[0];
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        if (child.material instanceof THREE.Material) {
+          child.material.dispose();
+        }
+      }
+      roadsGroup.remove(child);
+    }
+
+    // 渲染道路
+    roads.forEach(road => {
+      if (!road.path || road.path.length < 2) return;
+
+      const roadColor = getRoadColor(road.type);
+      const path = road.path.map(p => new THREE.Vector3(p.x, p.y, p.z));
+
+      for (let i = 0; i < path.length - 1; i++) {
+        const start = path[i];
+        const end = path[i + 1];
+        const length = start.distanceTo(end);
+        const direction = new THREE.Vector3().subVectors(end, start).normalize();
+        const angle = Math.atan2(direction.x, direction.z);
+
+        // 道路主体
+        const roadGeometry = new THREE.PlaneGeometry(road.width, length);
+        const roadMaterial = materialFactory.getMaterial({
+          type: 'road',
+          color: roadColor,
+          flatShading: true,
+          roughness: 0.9,
+        });
+
+        const roadMesh = new THREE.Mesh(roadGeometry, roadMaterial);
+        roadMesh.rotation.x = -Math.PI / 2;
+        roadMesh.rotation.z = angle;
+        roadMesh.position.set(
+          (start.x + end.x) / 2,
+          0.15,
+          (start.z + end.z) / 2
+        );
+        roadMesh.receiveShadow = true;
+        roadsGroup.add(roadMesh);
+
+        // 车道标线
+        if (road.lanes > 1 && road.has_lane_markings !== false) {
+          addLaneMarkings(roadsGroup, start, end, road.width, road.lanes, angle);
+        }
+
+        // 边缘线
+        addEdgeMarkings(roadsGroup, start, end, road.width, angle);
+      }
+    });
+
+    // 渲染路口
+    intersections.forEach(intersection => {
+      const junctionSize = 20;
+      const junctionGeometry = new THREE.CircleGeometry(junctionSize, 32);
+      const junctionMaterial = materialFactory.getMaterial({
+        type: 'road',
+        color: CARTOON_COLORS.road,
+        flatShading: true,
+      });
+
+      const junction = new THREE.Mesh(junctionGeometry, junctionMaterial);
+      junction.rotation.x = -Math.PI / 2;
+      junction.position.set(intersection.position.x, 0.15, intersection.position.z);
+      roadsGroup.add(junction);
+
+      // 交通信号灯
+      if (intersection.isTrafficControlled) {
+        const poleGeometry = new THREE.CylinderGeometry(0.2, 0.2, 4, 8);
+        const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        const pole = new THREE.Mesh(poleGeometry, poleMaterial);
+        pole.position.set(intersection.position.x + 8, 2, intersection.position.z + 8);
+        roadsGroup.add(pole);
+
+        const boxGeometry = new THREE.BoxGeometry(1.5, 0.8, 0.5);
+        const boxMaterial = new THREE.MeshStandardMaterial({ color: 0x1a1a1a });
+        const box = new THREE.Mesh(boxGeometry, boxMaterial);
+        box.position.set(intersection.position.x + 8, 4, intersection.position.z + 8);
+        roadsGroup.add(box);
+
+        const lightGeometry = new THREE.CircleGeometry(0.2, 16);
+        const lightMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const light = new THREE.Mesh(lightGeometry, lightMaterial);
+        light.position.set(intersection.position.x + 8, 4.1, intersection.position.z + 7.7);
+        roadsGroup.add(light);
+      }
+    });
+
+  }, [roads, intersections, sceneReady, enableRoads]);
+
+  // 渲染车辆
+  useEffect(() => {
+    if (!sceneReady || !sceneRef.current || !enableVehicles) return;
+
+    const vehiclesGroup = (sceneRef.current as any).vehiclesGroup as THREE.Group;
+    if (!vehiclesGroup) return;
+
+    // 清空现有车辆
+    while (vehiclesGroup.children.length > 0) {
+      const child = vehiclesGroup.children[0];
+      if (child instanceof THREE.Mesh || child instanceof THREE.Group) {
+        child.traverse((mesh) => {
+          if (mesh instanceof THREE.Mesh) {
+            mesh.geometry.dispose();
+            if (mesh.material instanceof THREE.Material) {
+              mesh.material.dispose();
+            }
+          }
+        });
+      }
+      vehiclesGroup.remove(child);
+    }
+
+    // 渲染车辆
+    vehicles.forEach(vehicle => {
+      const vehicleMesh = createVehicleMesh(vehicle);
+      if (vehicleMesh) {
+        vehiclesGroup.add(vehicleMesh);
+      }
+    });
+
+  }, [vehicles, sceneReady, enableVehicles, onVehicleClick]);
+
   // 聚焦到指定的 Agent（需要在 useEffect 之前定义）
   const focusOnAgent = (agentId: string) => {
     if (!agentMeshesRef.current || !cameraRef.current || !controlsRef.current) return;
@@ -583,8 +1063,10 @@ export function VirtualSpace3D({
       return;
     }
 
-    const mode = viewMode;
-    const trackedId = trackedAgentRef.current || selectedAgentId;
+    // 使用 ref 获取最新的视角模式，避免闭包陷阱
+    const mode = viewModeRef.current;
+    // 优先使用外部传入的 selectedAgentId，其次使用内部状态
+    const trackedId = trackedAgentRef.current || selectedAgentId || selectedAgent;
 
     // If no tracked agent for first/second person mode, fall back to third-person behavior
     if (!trackedId && mode !== 'third-person') {
@@ -643,7 +1125,7 @@ export function VirtualSpace3D({
     }
   };
 
-  // 当选中的 Agent 改变时，更新追踪
+  // 当外部传入的 selectedAgentId 改变时，更新追踪
   useEffect(() => {
     if (selectedAgentId) {
       trackedAgentRef.current = selectedAgentId;
@@ -652,6 +1134,19 @@ export function VirtualSpace3D({
       trackedAgentRef.current = null;
     }
   }, [selectedAgentId]);
+
+  // 当内部 selectedAgent 状态改变时，也更新追踪
+  useEffect(() => {
+    if (selectedAgent) {
+      trackedAgentRef.current = selectedAgent;
+      focusOnAgent(selectedAgent);
+    } else {
+      // 只有当外部也没有传入 selectedAgentId 时才清空追踪
+      if (!selectedAgentId) {
+        trackedAgentRef.current = null;
+      }
+    }
+  }, [selectedAgent, selectedAgentId]);
 
   // 当视角模式改变时通知父组件
   useEffect(() => {
