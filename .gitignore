@@ -1,0 +1,6 @@
+# Git ignore for AWS project
+node_modules/
+dist/
+*.log
+.env
+.DS_Store

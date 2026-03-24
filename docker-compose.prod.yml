@@ -1,0 +1,138 @@
+# 生产环境 Docker Compose 配置
+# 使用域名访问: www.aivworld.com 和 api.aivworld.com
+
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: aivworld-postgres-prod
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agentworld}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: agent_world
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentworld}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aivworld-network
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # 后端 API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: aivworld/backend:latest
+    container_name: aivworld-backend-prod
+    environment:
+      # 数据库连接
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-agentworld}:${POSTGRES_PASSWORD}@postgres:5432/agent_world?schema=public"
+      # 服务器配置
+      HOST: "0.0.0.0"
+      PORT: 3000
+      NODE_ENV: production
+      # API 配置
+      API_SECRET_KEY: ${API_SECRET_KEY}
+      # CORS 配置 - 生产环境使用域名
+      CORS_ORIGIN: "https://www.aivworld.com,https://aivworld.com"
+      # WebSocket
+      WS_PORT: 3001
+      # 世界设置
+      WORLD_TIME_SPEED: ${WORLD_TIME_SPEED:-1}
+      WORLD_START_TIME: "${WORLD_START_TIME:-08:00}"
+      WORLD_START_DATE: "${WORLD_START_DATE:-2026-03-18}"
+    ports:
+      - "3000:3000"
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - aivworld-network
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # 前端
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: https://api.aivworld.com
+    image: aivworld/frontend:latest
+    container_name: aivworld-frontend-prod
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    networks:
+      - aivworld-network
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Nginx 反向代理 (处理 SSL 和域名路由)
+  nginx-proxy:
+    image: nginx:alpine
+    container_name: aivworld-nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - aivworld-network
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  postgres_data_prod:
+    driver: local
+  nginx_logs:
+    driver: local
+
+networks:
+  aivworld-network:
+    driver: bridge

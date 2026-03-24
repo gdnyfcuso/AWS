@@ -1,0 +1,91 @@
+# 测试环境 Docker Compose 配置
+# 使用 IP 访问
+
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: aivworld-postgres-test
+    environment:
+      POSTGRES_USER: agentworld
+      POSTGRES_PASSWORD: agentworld123
+      POSTGRES_DB: agent_world
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentworld"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aivworld-network
+
+  # 后端 API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aivworld-backend-test
+    environment:
+      # 数据库连接
+      DATABASE_URL: "postgresql://agentworld:agentworld123@postgres:5432/agent_world?schema=public"
+      # 服务器配置
+      HOST: "0.0.0.0"
+      PORT: 3000
+      NODE_ENV: production
+      # API 配置
+      API_SECRET_KEY: "${API_SECRET_KEY:-your-secret-key-change-this}"
+      # CORS 配置 - 测试环境使用 IP
+      CORS_ORIGIN: "http://${TEST_IP:-100.64.0.131}:80,http://localhost:80"
+      # WebSocket
+      WS_PORT: 3001
+      # 世界设置
+      WORLD_TIME_SPEED: 1
+      WORLD_START_TIME: "08:00"
+      WORLD_START_DATE: "2026-03-18"
+    ports:
+      - "3000:3000"
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - aivworld-network
+    restart: unless-stopped
+
+  # 前端
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: aivworld-frontend-test
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    networks:
+      - aivworld-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  aivworld-network:
+    driver: bridge
