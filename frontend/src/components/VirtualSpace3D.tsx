@@ -1028,9 +1028,12 @@ export function VirtualSpace3D({
     });
   }, [currentSelectedAgentId, sceneReady]);
 
-  // 轮询更新 Agent 位置
+  // 轮询更新 Agent 位置 - 已禁用（Agent 不再自动移动）
   useEffect(() => {
     if (!sceneReady) return;
+
+    // 禁用自动位置轮询 - Agent 只由键盘控制
+    return;
 
     const pollPositions = async () => {
       try {
