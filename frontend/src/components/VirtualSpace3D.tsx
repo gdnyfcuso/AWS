@@ -1437,11 +1437,12 @@ export function VirtualSpace3D({
 
     // 获取所有 Agent 的位置
     const agents: Array<{ id: string; position: THREE.Vector3 }> = [];
-    agentMeshesRef.current.children.forEach((agentGroup: THREE.Group) => {
-      if (agentGroup.userData.agentId) {
+    agentMeshesRef.current.children.forEach((agentGroup) => {
+      const group = agentGroup as THREE.Group;
+      if (group.userData.agentId) {
         agents.push({
-          id: agentGroup.userData.agentId,
-          position: agentGroup.position.clone(),
+          id: group.userData.agentId,
+          position: group.position.clone(),
         });
       }
     });
@@ -2190,7 +2191,7 @@ export function VirtualSpace3D({
             return (
               <div
                 key={agent.agent_id}
-                onClick={() => setSelectedAgent(agent.agent_id)}
+                onClick={() => setInternalSelectedAgent(agent.agent_id)}
                 className="absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer hover:scale-125 transition-transform"
                 style={{
                   left: `${screenX}%`,
@@ -2249,7 +2250,7 @@ export function VirtualSpace3D({
             return (
               <button
                 key={agent.agent_id}
-                onClick={() => setSelectedAgent(agent.agent_id)}
+                onClick={() => setInternalSelectedAgent(agent.agent_id)}
                 className={`flex items-center gap-2 p-2 rounded-lg border text-left transition-all ${
                   currentSelectedAgent === agent.agent_id
                     ? 'border-world-500 bg-world-50'
@@ -2523,7 +2524,7 @@ export function VirtualSpace3D({
             <button
               key={agent.agent_id}
               onClick={() => {
-                setSelectedAgent(agent.agent_id);
+                setInternalSelectedAgent(agent.agent_id);
                 if (onAgentClick) {
                   onAgentClick(agent.agent_id);
                 }
