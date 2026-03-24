@@ -324,6 +324,14 @@ export function VirtualSpace3D({
   // 使用外部传入的currentSelectedAgentId，如果没有则使用内部状态
   const currentSelectedAgent = currentSelectedAgentId || internalSelectedAgent;
 
+  // 使用 ref 存储当前选中的 Agent，避免动画循环闭包问题
+  const currentSelectedAgentRef = useRef<string | null>(currentSelectedAgent);
+
+  // 当 currentSelectedAgent 变化时，更新 ref
+  useEffect(() => {
+    currentSelectedAgentRef.current = currentSelectedAgent;
+  }, [currentSelectedAgent]);
+
   // 当外部currentSelectedAgentId变化时，同步内部状态
   useEffect(() => {
     if (currentSelectedAgentId) {
@@ -392,28 +400,39 @@ export function VirtualSpace3D({
       }
       keysPressedRef.current.add(e.key);
 
-      // 空格键跳跃 - 使用currentSelectedAgent
-      if (e.key === ' ' && currentSelectedAgent) {
-        const physics = agentPhysicsRef.current.get(currentSelectedAgent);
+      // 调试日志
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        console.log(`[Keyboard] ${e.key} pressed, selectedAgent: ${currentSelectedAgentRef.current}`);
+      }
+
+      // 空格键跳跃 - 使用 ref 避免闭包问题
+      if (e.key === ' ' && currentSelectedAgentRef.current) {
+        const physics = agentPhysicsRef.current.get(currentSelectedAgentRef.current);
         if (physics && !physics.isJumping) {
           // 开始跳跃
-          agentPhysicsRef.current.set(currentSelectedAgent, {
+          agentPhysicsRef.current.set(currentSelectedAgentRef.current, {
             ...physics,
             velocityY: 15, // 初始跳跃速度
             isJumping: true,
           });
+          console.log(`[Keyboard] Space pressed, jumping! selectedAgent: ${currentSelectedAgentRef.current}`);
         }
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
       keysPressedRef.current.delete(e.key);
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        console.log(`[Keyboard] ${e.key} released`);
+      }
     };
 
+    console.log('[Keyboard] Event listeners registered');
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
 
     return () => {
+      console.log('[Keyboard] Event listeners removed');
       document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('keyup', handleKeyUp);
     };
@@ -593,6 +612,12 @@ export function VirtualSpace3D({
     // 清除旧的 Agent
     while (group.children.length > 0) {
       const child = group.children[0];
+      if (child.userData.agentId) {
+        // 清除该 Agent 的相关数据
+        agentRotationsRef.current.delete(child.userData.agentId);
+        agentPhysicsRef.current.delete(child.userData.agentId);
+        agentTargetPositionsRef.current.delete(child.userData.agentId);
+      }
       if (child instanceof THREE.Group) {
         child.clear();
       }
@@ -952,6 +977,7 @@ export function VirtualSpace3D({
       // 初始化目标位置和旋转角度
       agentTargetPositionsRef.current.set(agent.agent_id, { x: agent.x, y: agent.y, z: agent.z });
       agentRotationsRef.current.set(agent.agent_id, agentGroup.rotation.y);
+      console.log(`[Agent Created] ${agent.agent_id}, rotation: ${agentGroup.rotation.y}, position: (${agent.x}, ${agent.y}, ${agent.z})`);
 
       group.add(agentGroup);
     });
@@ -1490,11 +1516,16 @@ export function VirtualSpace3D({
 
       // Agent动画和平滑移动
       if (agentMeshesRef.current) {
+        // 调试：每秒打印一次当前选中状态
+        if (Math.floor(time) % 2 === 0 && Math.floor(time) !== Math.floor(time - 1/60)) {
+          console.log(`[Animate] Current selected agent: ${currentSelectedAgentRef.current}, Total agents: ${agentMeshesRef.current.children.length}`);
+        }
+
         agentMeshesRef.current.children.forEach(agentGroup => {
           if (agentGroup instanceof THREE.Group && agentGroup.userData.parts) {
             const parts = agentGroup.userData.parts;
             const agentId = agentGroup.userData.agentId;
-            const isSelected = agentId === currentSelectedAgent;
+            const isSelected = agentId === currentSelectedAgentRef.current;
 
             // 初始化物理状态
             if (agentId && !agentPhysicsRef.current.has(agentId)) {
@@ -1537,6 +1568,11 @@ export function VirtualSpace3D({
               if (keysPressedRef.current.has('ArrowDown')) {
                 keyboardMoveX = Math.sin(newRotation) * moveSpeed;
                 keyboardMoveZ = Math.cos(newRotation) * moveSpeed;
+              }
+
+              // 调试日志
+              if (keyboardMoveX !== 0 || keyboardMoveZ !== 0 || newRotation !== currentRotation) {
+                console.log(`[Animate] Agent ${agentId}: rotation=${newRotation.toFixed(2)}, move=(${keyboardMoveX.toFixed(2)}, ${keyboardMoveZ.toFixed(2)})`);
               }
 
               // 更新旋转角度
