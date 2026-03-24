@@ -1425,15 +1425,16 @@ export function VirtualSpace3D({
     if (!sceneRef.current || !agentMeshesRef.current) return;
 
     const scene = sceneRef.current as any;
-    const channelsGroup = (scene as any).channelsGroup as THREE.Group;
 
     // 如果交流通道组不存在，创建它
-    if (!channelsGroup) {
+    if (!(scene as any).channelsGroup) {
       const group = new THREE.Group();
       group.name = 'communication_channels';
       (scene as any).channelsGroup = group;
       scene.add(group);
     }
+
+    const channelsGroup = (scene as any).channelsGroup as THREE.Group;
 
     // 获取所有 Agent 的位置
     const agents: Array<{ id: string; position: THREE.Vector3 }> = [];
