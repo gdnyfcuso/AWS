@@ -157,6 +157,7 @@ export class AgentManager {
       agent: {
         agent_id: agent.agent_id,
         agent_name: agent.agent_name,
+        api_key: apiKey,  // 添加 API Key 到返回值
         home_location: {
           id: homeLocation.location_id,
           name: homeLocation.name,
