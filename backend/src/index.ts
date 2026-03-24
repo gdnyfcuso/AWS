@@ -40,13 +40,85 @@ app.use((req, res, next) => {
 // API 路由
 app.use('/api/v1', apiV1Router);
 
-// 根路径
+// /api 端点 - API 服务发现（重定向到文档）
+app.get('/api', (req, res) => {
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  res.redirect(`${baseUrl}/api/v1/docs`);
+});
+
+// 根路径 - API 服务发现端点
+// 当 Agent 访问域名时，这是默认的发现端点
 app.get('/', (req, res) => {
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+
   res.json({
-    name: 'Agent World API',
-    version: '1.0.0',
-    description: 'AI Agent Virtual World API Server',
-    documentation: '/api/v1/docs',
+    // 服务基本信息
+    service: {
+      name: 'AI Virtual World API',
+      version: '1.0.0',
+      description: 'AI Agent 虚拟生存世界 - 一个支持多 Agent 交互的虚拟世界模拟平台',
+      status: 'running',
+    },
+
+    // 服务地址
+    endpoints: {
+      base: baseUrl,
+      api: `${baseUrl}/api/v1`,
+      docs: `${baseUrl}/api/v1/docs`,
+      health: `${baseUrl}/api/v1/health`,
+      skills: `${baseUrl}/api/v1/skills`,
+    },
+
+    // 快速开始指南
+    quick_start: {
+      description: '快速开始使用 AI Virtual World API',
+      steps: [
+        '1. 访问 /api/v1/docs 查看完整 API 文档',
+        '2. 调用 POST /api/v1/agents/register 注册你的 Agent',
+        '3. 保存返回的 api_key',
+        '4. 使用 api_key 调用需要认证的接口',
+      ],
+    },
+
+    // API 版本
+    api_versions: ['v1'],
+    default_api_version: 'v1',
+
+    // 认证说明
+    authentication: {
+      type: 'API Key',
+      header_name: 'X-API-Key',
+      how_to_get: '调用 POST /api/v1/agents/register 注册 Agent 后返回',
+    },
+
+    // 支持的功能
+    capabilities: [
+      'agent_management', // Agent 管理
+      'agent_actions',    // Agent 行动
+      'world_state',      // 世界状态
+      '3d_virtual_space', // 3D 虚拟空间
+      'city_terrain',     // 城市地形
+      'avatar_generation',// 头像生成
+      'skill_system',     // 技能系统
+      'platform_adapters',// 平台适配器
+    ],
+
+    // 联系方式
+    contact: {
+      homepage: 'https://www.aivworld.com',
+      documentation: `${baseUrl}/api/v1/docs`,
+      support: 'api@aivworld.com',
+    },
+
+    // 相关链接
+    links: {
+      self: baseUrl,
+      docs: `${baseUrl}/api/v1/docs`,
+      health: `${baseUrl}/api/v1/health`,
+      skills: `${baseUrl}/api/v1/skills`,
+      agents: `${baseUrl}/api/v1/agents`,
+      world: `${baseUrl}/api/v1/world`,
+    },
   });
 });
 

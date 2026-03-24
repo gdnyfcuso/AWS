@@ -5,7 +5,6 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 // @ts-ignore - OrbitControls import
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { createPortal } from 'react-dom';
 import { getApiUrl } from '../utils/api';
 import { TerrainFeatureData } from './TerrainRenderer';
 import { RoadData, IntersectionData } from './RoadRenderer';
@@ -41,7 +40,7 @@ interface VirtualSpace3DProps {
   agents: Agent3D[];
   buildings: Building3D[];
   onAgentClick?: (agentId: string) => void;
-  selectedAgentId?: string | null; // 外部传入选中的 Agent ID
+  currentSelectedAgentId?: string | null; // 外部传入选中的 Agent ID
   viewMode?: 'first-person' | 'second-person' | 'third-person'; // 视角模式
   onViewModeChange?: (mode: 'first-person' | 'second-person' | 'third-person') => void;
   // 新增：地形、道路、车辆数据
@@ -276,7 +275,7 @@ export function VirtualSpace3D({
   agents,
   buildings,
   onAgentClick,
-  selectedAgentId,
+  currentSelectedAgentId,
   viewMode: externalViewMode,
   onViewModeChange,
   terrainFeatures = [],
@@ -315,22 +314,45 @@ export function VirtualSpace3D({
   // 当前追踪的 Agent（用于第一/第二人称视角）
   const trackedAgentRef = useRef<string | null>(null);
   const [webGLError, setWebGLError] = useState(false);
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [internalSelectedAgent, setInternalSelectedAgent] = useState<string | null>(null);
   const [sceneReady, setSceneReady] = useState(false);
   const [initAttempted, setInitAttempted] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // 使用外部传入的currentSelectedAgentId，如果没有则使用内部状态
+  const currentSelectedAgent = currentSelectedAgentId || internalSelectedAgent;
+
+  // 当外部currentSelectedAgentId变化时，同步内部状态
+  useEffect(() => {
+    if (currentSelectedAgentId) {
+      setInternalSelectedAgent(currentSelectedAgentId);
+    }
+  }, [currentSelectedAgentId]);
 
   // 使用外部传入的视角模式，如果没有则使用内部状态
   const viewMode = externalViewMode || currentViewMode;
 
-  // 全屏切换函数
+  // 全屏切换函数 - 使用真正的浏览器全屏 API
   const toggleFullscreen = () => {
-    const newFullscreenState = !externalIsFullscreen;
-    console.log('toggleFullscreen called:', {
-      current: externalIsFullscreen,
-      new: newFullscreenState
-    });
-    if (onFullscreenChange) {
-      onFullscreenChange(newFullscreenState);
+    const container = containerRef.current;
+    if (!container) return;
+
+    if (!document.fullscreenElement) {
+      // 进入全屏模式
+      container.requestFullscreen().then(() => {
+        if (onFullscreenChange) {
+          onFullscreenChange(true);
+        }
+      }).catch(err => {
+        console.error('Failed to enter fullscreen:', err);
+      });
+    } else {
+      // 退出全屏模式
+      document.exitFullscreen().then(() => {
+        if (onFullscreenChange) {
+          onFullscreenChange(false);
+        }
+      });
     }
   };
 
@@ -341,36 +363,39 @@ export function VirtualSpace3D({
 
   // 全屏模式下监听 ESC 键退出
   useEffect(() => {
-    if (!externalIsFullscreen) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        console.log('ESC pressed, exiting fullscreen');
-        if (onFullscreenChange) {
-          onFullscreenChange(false);
-        }
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!document.fullscreenElement;
+      console.log('Fullscreen changed:', isCurrentlyFullscreen);
+      setIsFullscreen(isCurrentlyFullscreen);
+      if (onFullscreenChange) {
+        onFullscreenChange(isCurrentlyFullscreen);
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [externalIsFullscreen, onFullscreenChange]);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, [onFullscreenChange]);
 
   // 键盘控制 - Agent 移动和跳跃
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // ESC键退出全屏
+      if (e.key === 'Escape' && document.fullscreenElement) {
+        return; // 让fullscreenchange事件处理
+      }
+
       // 阻止方向键和空格键的默认滚动行为
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
         e.preventDefault();
       }
       keysPressedRef.current.add(e.key);
 
-      // 空格键跳跃
-      if (e.key === ' ' && selectedAgentId) {
-        const physics = agentPhysicsRef.current.get(selectedAgentId);
+      // 空格键跳跃 - 使用currentSelectedAgent
+      if (e.key === ' ' && currentSelectedAgent) {
+        const physics = agentPhysicsRef.current.get(currentSelectedAgent);
         if (physics && !physics.isJumping) {
           // 开始跳跃
-          agentPhysicsRef.current.set(selectedAgentId, {
+          agentPhysicsRef.current.set(currentSelectedAgent, {
             ...physics,
             velocityY: 15, // 初始跳跃速度
             isJumping: true,
@@ -390,7 +415,7 @@ export function VirtualSpace3D({
       document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('keyup', handleKeyUp);
     };
-  }, [selectedAgentId]);
+  }, [currentSelectedAgent]);
 
   // 检查 WebGL 支持
   useEffect(() => {
@@ -572,139 +597,268 @@ export function VirtualSpace3D({
       group.remove(child);
     }
 
-    // 添加新的 Agent
+    // 添加新的 Agent - 动漫 Q 版风格
     agents.forEach(agent => {
       const agentGroup = new THREE.Group();
       agentGroup.position.set(agent.x, agent.y + 1, agent.z);
 
       const moodColor = moodColors[agent.mood] || '#6b7280';
-      const skinColor = 0xffcc99;
+      const skinColor = 0xffe0c0; // 更嫩的肤色
 
-      // === 下半身（腿和脚）===
-      // 左腿
-      const legGeometry = new THREE.CylinderGeometry(0.4, 0.3, 2.5, 8);
-      const legMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+      // 根据心情设定头发颜色
+      const hairColors: Record<string, number> = {
+        happy: 0x4a3728,    // 棕色
+        sad: 0x6b5b95,      // 紫色
+        angry: 0x8b0000,    // 深红
+        neutral: 0x2c1810,  // 深棕
+        focused: 0x1a1a2e,  // 深蓝黑
+        relaxed: 0xdeb887,  // 金色
+      };
+      const hairColor = hairColors[agent.mood] || 0x2c1810;
+
+      // 眼睛颜色（根据心情变化）
+      const eyeColors: Record<string, number> = {
+        happy: 0x88ccff,    // 蓝色
+        sad: 0x6699cc,      // 灰蓝
+        angry: 0xff6644,    // 红色
+        neutral: 0x88cc88,  // 绿色
+        focused: 0x4488ff,  // 深蓝
+        relaxed: 0xffaa66,  // 琥珀色
+      };
+      const eyeColor = eyeColors[agent.mood] || 0x88cc88;
+
+      // === Q版短腿 ===
+      // 左腿（短粗）
+      const legGeometry = new THREE.CapsuleGeometry(0.5, 0.8, 4, 8);
+      const legMaterial = new THREE.MeshStandardMaterial({ color: 0x444466 });
       const leftLeg = new THREE.Mesh(legGeometry, legMaterial);
-      leftLeg.position.set(-0.5, 1.25, 0);
+      leftLeg.position.set(-0.4, 0.9, 0);
       leftLeg.castShadow = true;
       agentGroup.add(leftLeg);
-      leftLeg.userData = { part: 'leftLeg', initialY: 1.25 };
-
-      // 左脚
-      const footGeometry = new THREE.BoxGeometry(0.6, 0.3, 1);
-      const footMaterial = new THREE.MeshStandardMaterial({ color: 0x222222 });
-      const leftFoot = new THREE.Mesh(footGeometry, footMaterial);
-      leftFoot.position.set(-0.5, 0.15, 0.2);
-      leftFoot.castShadow = true;
-      agentGroup.add(leftFoot);
-      leftFoot.userData = { part: 'leftFoot', parent: 'leftLeg' };
+      leftLeg.userData = { part: 'leftLeg', initialY: 0.9 };
 
       // 右腿
       const rightLeg = new THREE.Mesh(legGeometry, legMaterial);
-      rightLeg.position.set(0.5, 1.25, 0);
+      rightLeg.position.set(0.4, 0.9, 0);
       rightLeg.castShadow = true;
       agentGroup.add(rightLeg);
-      rightLeg.userData = { part: 'rightLeg', initialY: 1.25 };
+      rightLeg.userData = { part: 'rightLeg', initialY: 0.9 };
 
-      // 右脚
-      const rightFoot = new THREE.Mesh(footGeometry, footMaterial);
-      rightFoot.position.set(0.5, 0.15, 0.2);
-      rightFoot.castShadow = true;
-      agentGroup.add(rightFoot);
-      rightFoot.userData = { part: 'rightFoot', parent: 'rightLeg' };
+      // === Q版鞋子（圆润）===
+      const shoeGeometry = new THREE.SphereGeometry(0.45, 16, 16);
+      shoeGeometry.scale(1.3, 0.7, 1.5);
+      const shoeMaterial = new THREE.MeshStandardMaterial({ color: 0x222233 });
+      const leftShoe = new THREE.Mesh(shoeGeometry, shoeMaterial);
+      leftShoe.position.set(-0.4, 0.25, 0.15);
+      leftShoe.castShadow = true;
+      agentGroup.add(leftShoe);
+      leftShoe.userData = { part: 'leftShoe', parent: 'leftLeg' };
 
-      // === 躯干 ===
-      const bodyGeometry = new THREE.CylinderGeometry(1.5, 1.8, 3.5, 16);
+      const rightShoe = new THREE.Mesh(shoeGeometry, shoeMaterial);
+      rightShoe.position.set(0.4, 0.25, 0.15);
+      rightShoe.castShadow = true;
+      agentGroup.add(rightShoe);
+      rightShoe.userData = { part: 'rightShoe', parent: 'rightLeg' };
+
+      // === Q版身体（圆润小巧）===
+      const bodyGeometry = new THREE.SphereGeometry(1.4, 32, 32);
+      bodyGeometry.scale(1, 0.85, 0.9);
       const bodyMaterial = new THREE.MeshStandardMaterial({
         color: moodColor,
-        metalness: 0.3,
-        roughness: 0.7
+        metalness: 0.1,
+        roughness: 0.6
       });
       const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
-      body.position.y = 3.75;
+      body.position.y = 2.2;
       body.castShadow = true;
       agentGroup.add(body);
 
-      // === 手臂 ===
+      // === Q版手臂（短而圆）===
       // 左臂
-      const armGeometry = new THREE.CylinderGeometry(0.3, 0.25, 2.5, 8);
+      const armGeometry = new THREE.CapsuleGeometry(0.35, 0.6, 4, 8);
       const armMaterial = new THREE.MeshStandardMaterial({ color: moodColor });
       const leftArm = new THREE.Mesh(armGeometry, armMaterial);
-      leftArm.position.set(-1.3, 4, 0);
-      leftArm.rotation.z = Math.PI / 6; // 稍微张开
+      leftArm.position.set(-1.2, 2.3, 0);
+      leftArm.rotation.z = Math.PI / 5;
       leftArm.castShadow = true;
       agentGroup.add(leftArm);
-      leftArm.userData = { part: 'leftArm', initialRotation: Math.PI / 6 };
+      leftArm.userData = { part: 'leftArm', initialRotation: Math.PI / 5 };
 
-      // 左手
-      const handGeometry = new THREE.SphereGeometry(0.35, 16, 16);
+      // 左手（圆润的小手）
+      const handGeometry = new THREE.SphereGeometry(0.4, 16, 16);
       const handMaterial = new THREE.MeshStandardMaterial({ color: skinColor });
       const leftHand = new THREE.Mesh(handGeometry, handMaterial);
-      leftHand.position.set(-1.8, 2.5, 0);
+      leftHand.position.set(-1.6, 1.7, 0);
       leftHand.castShadow = true;
       agentGroup.add(leftHand);
       leftHand.userData = { part: 'leftHand', parent: 'leftArm' };
 
       // 右臂
       const rightArm = new THREE.Mesh(armGeometry, armMaterial);
-      rightArm.position.set(1.3, 4, 0);
-      rightArm.rotation.z = -Math.PI / 6;
+      rightArm.position.set(1.2, 2.3, 0);
+      rightArm.rotation.z = -Math.PI / 5;
       rightArm.castShadow = true;
       agentGroup.add(rightArm);
-      rightArm.userData = { part: 'rightArm', initialRotation: -Math.PI / 6 };
+      rightArm.userData = { part: 'rightArm', initialRotation: -Math.PI / 5 };
 
       // 右手
       const rightHand = new THREE.Mesh(handGeometry, handMaterial);
-      rightHand.position.set(1.8, 2.5, 0);
+      rightHand.position.set(1.6, 1.7, 0);
       rightHand.castShadow = true;
       agentGroup.add(rightHand);
       rightHand.userData = { part: 'rightHand', parent: 'rightArm' };
 
-      // === 头部 ===
-      const headGeometry = new THREE.SphereGeometry(1, 24, 24);
+      // === Q版超大头部 ===
+      const headGeometry = new THREE.SphereGeometry(1.3, 32, 32);
       const headMaterial = new THREE.MeshStandardMaterial({
         color: skinColor,
-        metalness: 0.1,
-        roughness: 0.5
+        metalness: 0.0,
+        roughness: 0.8
       });
       const head = new THREE.Mesh(headGeometry, headMaterial);
-      head.position.y = 6.2;
+      head.position.y = 4.2;
       head.castShadow = true;
       agentGroup.add(head);
       head.userData = { part: 'head' };
 
-      // === 眼睛（更大更明显）===
-      const eyeWhiteGeometry = new THREE.SphereGeometry(0.3, 16, 16);
-      const eyeWhiteMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
+      // === 头发（Q版发型）===
+      // 头顶发髻
+      const hairTopGeometry = new THREE.SphereGeometry(1.4, 32, 32);
+      hairTopGeometry.scale(1, 0.7, 1);
+      const hairMaterial = new THREE.MeshStandardMaterial({
+        color: hairColor,
+        metalness: 0.3,
+        roughness: 0.5
+      });
+      const hairTop = new THREE.Mesh(hairTopGeometry, hairMaterial);
+      hairTop.position.y = 4.6;
+      hairTop.castShadow = true;
+      agentGroup.add(hairTop);
+
+      // 刘海（前额发片）
+      const bangsGeometry = new THREE.SphereGeometry(1.35, 32, 32);
+      bangsGeometry.scale(1, 0.4, 0.6);
+      const bangs = new THREE.Mesh(bangsGeometry, hairMaterial);
+      bangs.position.set(0, 4.1, 0.9);
+      bangs.castShadow = true;
+      agentGroup.add(bangs);
+
+      // 侧面头发
+      const sideHairGeometry = new THREE.SphereGeometry(0.5, 16, 16);
+      sideHairGeometry.scale(0.6, 1.2, 0.8);
+      const leftSideHair = new THREE.Mesh(sideHairGeometry, hairMaterial);
+      leftSideHair.position.set(-1.1, 3.8, 0);
+      leftSideHair.castShadow = true;
+      agentGroup.add(leftSideHair);
+
+      const rightSideHair = new THREE.Mesh(sideHairGeometry, hairMaterial);
+      rightSideHair.position.set(1.1, 3.8, 0);
+      rightSideHair.castShadow = true;
+      agentGroup.add(rightSideHair);
+
+      // === 超大动漫眼睛 ===
+      // 眼白（更大的眼睛）
+      const eyeWhiteGeometry = new THREE.SphereGeometry(0.45, 32, 32);
+      eyeWhiteGeometry.scale(1, 1.3, 0.5);
+      const eyeWhiteMaterial = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        metalness: 0,
+        roughness: 0.3
+      });
       const leftEyeWhite = new THREE.Mesh(eyeWhiteGeometry, eyeWhiteMaterial);
-      leftEyeWhite.position.set(-0.35, 6.3, 0.85);
+      leftEyeWhite.position.set(-0.4, 4.25, 1.0);
       agentGroup.add(leftEyeWhite);
 
       const rightEyeWhite = new THREE.Mesh(eyeWhiteGeometry, eyeWhiteMaterial);
-      rightEyeWhite.position.set(0.35, 6.3, 0.85);
+      rightEyeWhite.position.set(0.4, 4.25, 1.0);
       agentGroup.add(rightEyeWhite);
 
+      // 虹膜（大而明亮）
+      const irisGeometry = new THREE.SphereGeometry(0.35, 32, 32);
+      irisGeometry.scale(1, 1.2, 0.5);
+      const irisMaterial = new THREE.MeshStandardMaterial({
+        color: eyeColor,
+        metalness: 0.2,
+        roughness: 0.1,
+        emissive: eyeColor,
+        emissiveIntensity: 0.2
+      });
+      const leftIris = new THREE.Mesh(irisGeometry, irisMaterial);
+      leftIris.position.set(-0.4, 4.25, 1.25);
+      agentGroup.add(leftIris);
+      leftIris.userData = { part: 'leftIris' };
+
+      const rightIris = new THREE.Mesh(irisGeometry, irisMaterial);
+      rightIris.position.set(0.4, 4.25, 1.25);
+      agentGroup.add(rightIris);
+      rightIris.userData = { part: 'rightIris' };
+
       // 瞳孔
-      const pupilGeometry = new THREE.SphereGeometry(0.15, 16, 16);
-      const pupilMaterial = new THREE.MeshStandardMaterial({ color: 0x000000 });
+      const pupilGeometry = new THREE.SphereGeometry(0.18, 16, 16);
+      pupilGeometry.scale(1, 1.2, 0.6);
+      const pupilMaterial = new THREE.MeshStandardMaterial({
+        color: 0x000000,
+        metalness: 0,
+        roughness: 0
+      });
       const leftPupil = new THREE.Mesh(pupilGeometry, pupilMaterial);
-      leftPupil.position.set(-0.35, 6.3, 1.05);
+      leftPupil.position.set(-0.4, 4.25, 1.38);
       agentGroup.add(leftPupil);
-      leftPupil.userData = { part: 'leftPupil' };
+      leftPupil.userData = { part: 'leftPupil', iris: leftIris };
 
       const rightPupil = new THREE.Mesh(pupilGeometry, pupilMaterial);
-      rightPupil.position.set(0.35, 6.3, 1.05);
+      rightPupil.position.set(0.4, 4.25, 1.38);
       agentGroup.add(rightPupil);
-      rightPupil.userData = { part: 'rightPupil' };
+      rightPupil.userData = { part: 'rightPupil', iris: rightIris };
 
-      // === 嘴巴（简单的微笑弧线）===
-      const mouthGeometry = new THREE.TorusGeometry(0.2, 0.05, 8, 16, Math.PI);
-      const mouthMaterial = new THREE.MeshStandardMaterial({ color: 0xcc6666 });
+      // 高光（动漫眼特色）
+      const highlightGeometry = new THREE.SphereGeometry(0.08, 16, 16);
+      const highlightMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+
+      // 主高光（大）
+      const mainHighlightGeometry = new THREE.SphereGeometry(0.12, 16, 16);
+      const leftMainHighlight = new THREE.Mesh(mainHighlightGeometry, highlightMaterial);
+      leftMainHighlight.position.set(-0.28, 4.35, 1.35);
+      agentGroup.add(leftMainHighlight);
+
+      const rightMainHighlight = new THREE.Mesh(mainHighlightGeometry, highlightMaterial);
+      rightMainHighlight.position.set(0.48, 4.35, 1.35);
+      agentGroup.add(rightMainHighlight);
+
+      // 次高光（小）
+      const leftSubHighlight = new THREE.Mesh(highlightGeometry, highlightMaterial);
+      leftSubHighlight.position.set(-0.45, 4.15, 1.42);
+      agentGroup.add(leftSubHighlight);
+
+      const rightSubHighlight = new THREE.Mesh(highlightGeometry, highlightMaterial);
+      rightSubHighlight.position.set(0.35, 4.15, 1.42);
+      agentGroup.add(rightSubHighlight);
+
+      // === Q版嘴巴（小巧可爱）===
+      const mouthGeometry = new THREE.SphereGeometry(0.15, 16, 16);
+      mouthGeometry.scale(1, 0.5, 0.5);
+      const mouthMaterial = new THREE.MeshStandardMaterial({ color: 0xff8888 });
       const mouth = new THREE.Mesh(mouthGeometry, mouthMaterial);
-      mouth.position.set(0, 5.9, 0.85);
-      mouth.rotation.x = Math.PI / 2;
+      mouth.position.set(0, 3.85, 1.15);
       agentGroup.add(mouth);
       mouth.userData = { part: 'mouth' };
+
+      // === 腮红（可爱效果）===
+      const blushGeometry = new THREE.CircleGeometry(0.25, 16);
+      const blushMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffb6c1,
+        transparent: true,
+        opacity: 0.5
+      });
+      const leftBlush = new THREE.Mesh(blushGeometry, blushMaterial);
+      leftBlush.position.set(-0.8, 3.95, 1.1);
+      leftBlush.rotation.y = -0.3;
+      agentGroup.add(leftBlush);
+
+      const rightBlush = new THREE.Mesh(blushGeometry, blushMaterial);
+      rightBlush.position.set(0.8, 3.95, 1.1);
+      rightBlush.rotation.y = 0.3;
+      agentGroup.add(rightBlush);
 
       // === 名称标签（可点击）===
       const canvas = document.createElement('canvas');
@@ -736,7 +890,7 @@ export function VirtualSpace3D({
         side: THREE.DoubleSide
       });
       const label = new THREE.Mesh(labelGeometry, labelMaterial);
-      label.position.set(0, 8, 0);
+      label.position.set(0, 6.5, 0); // Q版角色更矮，标签位置调低
       label.userData = {
         isLabel: true,
         agentId: agent.agent_id,
@@ -745,17 +899,17 @@ export function VirtualSpace3D({
       };
       agentGroup.add(label);
 
-      // 添加选中指示环（Selection Ring）
-      const ringGeometry = new THREE.RingGeometry(3.5, 4, 32);
+      // 添加选中指示环（Selection Ring）- 适配 Q 版更小的尺寸
+      const ringGeometry = new THREE.RingGeometry(2, 2.5, 32);
       const ringMaterial = new THREE.MeshBasicMaterial({
-        color: 0x00ff00,
+        color: 0x00ff88,
         side: THREE.DoubleSide,
         transparent: true,
         opacity: 0
       });
       const selectionRing = new THREE.Mesh(ringGeometry, ringMaterial);
       selectionRing.rotation.x = -Math.PI / 2; // 水平放置
-      selectionRing.position.y = -0.9; // 在脚下
+      selectionRing.position.y = 0.1; // 在脚下（Q版角色更矮）
       selectionRing.userData = { isSelectionRing: true };
       agentGroup.add(selectionRing);
 
@@ -776,7 +930,13 @@ export function VirtualSpace3D({
           rightHand,
           leftPupil,
           rightPupil,
-          mouth
+          leftIris,
+          rightIris,
+          mouth,
+          hairTop,
+          bangs,
+          leftBlush,
+          rightBlush
         },
         // 动画状态
         animationState: {
@@ -802,7 +962,7 @@ export function VirtualSpace3D({
     agentMeshesRef.current.children.forEach(agentGroup => {
       if (agentGroup instanceof THREE.Group) {
         const agentId = agentGroup.userData.agentId;
-        const isSelected = agentId === selectedAgentId;
+        const isSelected = agentId === currentSelectedAgent;
 
         // 更新选中环
         agentGroup.children.forEach(child => {
@@ -811,7 +971,7 @@ export function VirtualSpace3D({
               child.material.opacity = 0.8;
               // 添加旋转动画
               const animateRing = () => {
-                if (agentId === selectedAgentId) {
+                if (agentId === currentSelectedAgentId) {
                   child.rotation.z += 0.02;
                   requestAnimationFrame(animateRing);
                 }
@@ -837,7 +997,7 @@ export function VirtualSpace3D({
         });
       }
     });
-  }, [selectedAgentId, sceneReady]);
+  }, [currentSelectedAgentId, sceneReady]);
 
   // 轮询更新 Agent 位置
   useEffect(() => {
@@ -1220,8 +1380,8 @@ export function VirtualSpace3D({
 
     // 使用 ref 获取最新的视角模式，避免闭包陷阱
     const mode = viewModeRef.current;
-    // 优先使用外部传入的 selectedAgentId，其次使用内部状态
-    const trackedId = trackedAgentRef.current || selectedAgentId || selectedAgent;
+    // 优先使用外部传入的 currentSelectedAgentId，其次使用内部状态
+    const trackedId = trackedAgentRef.current || currentSelectedAgentId || currentSelectedAgent;
 
     // If no tracked agent for first/second person mode, fall back to third-person behavior
     if (!trackedId && mode !== 'third-person') {
@@ -1280,28 +1440,28 @@ export function VirtualSpace3D({
     }
   };
 
-  // 当外部传入的 selectedAgentId 改变时，更新追踪
+  // 当外部传入的 currentSelectedAgentId 改变时，更新追踪
   useEffect(() => {
-    if (selectedAgentId) {
-      trackedAgentRef.current = selectedAgentId;
-      focusOnAgent(selectedAgentId);
+    if (currentSelectedAgentId) {
+      trackedAgentRef.current = currentSelectedAgentId;
+      focusOnAgent(currentSelectedAgentId);
     } else {
       trackedAgentRef.current = null;
     }
-  }, [selectedAgentId]);
+  }, [currentSelectedAgentId]);
 
-  // 当内部 selectedAgent 状态改变时，也更新追踪
+  // 当内部 currentSelectedAgent 状态改变时，也更新追踪
   useEffect(() => {
-    if (selectedAgent) {
-      trackedAgentRef.current = selectedAgent;
-      focusOnAgent(selectedAgent);
+    if (internalSelectedAgent) {
+      trackedAgentRef.current = internalSelectedAgent;
+      focusOnAgent(internalSelectedAgent);
     } else {
-      // 只有当外部也没有传入 selectedAgentId 时才清空追踪
-      if (!selectedAgentId) {
+      // 只有当外部也没有传入 currentSelectedAgentId 时才清空追踪
+      if (!currentSelectedAgentId) {
         trackedAgentRef.current = null;
       }
     }
-  }, [selectedAgent, selectedAgentId]);
+  }, [internalSelectedAgent, currentSelectedAgentId]);
 
   // 当视角模式改变时通知父组件
   useEffect(() => {
@@ -1331,7 +1491,7 @@ export function VirtualSpace3D({
           if (agentGroup instanceof THREE.Group && agentGroup.userData.parts) {
             const parts = agentGroup.userData.parts;
             const agentId = agentGroup.userData.agentId;
-            const isSelected = agentId === selectedAgentId;
+            const isSelected = agentId === currentSelectedAgent;
 
             // 初始化物理状态
             if (agentId && !agentPhysicsRef.current.has(agentId)) {
@@ -1443,16 +1603,16 @@ export function VirtualSpace3D({
               // 手臂大幅度摆动（与腿相反）
               if (parts.leftArm) {
                 parts.leftArm.rotation.x = -walkCycle * legSwingAngle * 0.8;
-                parts.leftArm.rotation.z = Math.PI / 6;
+                parts.leftArm.rotation.z = Math.PI / 5;
               }
               if (parts.rightArm) {
                 parts.rightArm.rotation.x = walkCycle * legSwingAngle * 0.8;
-                parts.rightArm.rotation.z = -Math.PI / 6;
+                parts.rightArm.rotation.z = -Math.PI / 5;
               }
 
               // 身体轻微上下起伏（行走时）
               if (parts.head) {
-                parts.head.position.y = 6.2 + Math.abs(Math.sin(time * 10)) * 0.2;
+                parts.head.position.y = 4.2 + Math.abs(Math.sin(time * 10)) * 0.15;
               }
             } else {
               // 静止或跳跃时的动画
@@ -1482,13 +1642,13 @@ export function VirtualSpace3D({
                 // 头部略微上仰
                 if (parts.head) {
                   parts.head.rotation.x = -0.2;
-                  parts.head.position.y = 6.2;
+                  parts.head.position.y = 4.2;
                 }
               } else {
                 // 静止时的动画
                 // 呼吸动画（头部轻微上下浮动）
                 if (parts.head) {
-                  parts.head.position.y = 6.2 + Math.sin(time * 2) * 0.05;
+                  parts.head.position.y = 4.2 + Math.sin(time * 2) * 0.03;
                   parts.head.rotation.x = 0;
                 }
 
@@ -1709,7 +1869,7 @@ export function VirtualSpace3D({
       }
 
       if (clickedAgentData) {
-        setSelectedAgent(clickedAgentData.agentId);
+        setInternalSelectedAgent(clickedAgentData.agentId);
         if (clickedAgentData.agentPosition) {
           // 平滑移动相机到Agent位置
           animateCameraToTarget(clickedAgentData.agentPosition);
@@ -1831,7 +1991,7 @@ export function VirtualSpace3D({
                 key={agent.agent_id}
                 onClick={() => setSelectedAgent(agent.agent_id)}
                 className={`flex items-center gap-2 p-2 rounded-lg border text-left transition-all ${
-                  selectedAgent === agent.agent_id
+                  currentSelectedAgent === agent.agent_id
                     ? 'border-world-500 bg-world-50'
                     : 'border-gray-200 hover:border-gray-300'
                 }`}
@@ -1847,9 +2007,9 @@ export function VirtualSpace3D({
         </div>
 
         {/* 选中 Agent 详情 */}
-        {selectedAgent && (
+        {currentSelectedAgent && (
           <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-            {agents.filter(a => a.agent_id === selectedAgent).map(agent => (
+            {agents.filter(a => a.agent_id === currentSelectedAgent).map(agent => (
               <div key={agent.agent_id}>
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-4 h-4 rounded-full" style={{ backgroundColor: moodColors[agent.mood] || '#6b7280' }} />
@@ -1899,7 +2059,7 @@ export function VirtualSpace3D({
                   : 'text-gray-600 hover:text-gray-900'
               }`}
               title="第二人称视角（跟踪视角）"
-              disabled={!selectedAgent}
+              disabled={!currentSelectedAgent}
             >
               第二人称
             </button>
@@ -1911,7 +2071,7 @@ export function VirtualSpace3D({
                   : 'text-gray-600 hover:text-gray-900'
               }`}
               title="第一人称视角（Agent视角）"
-              disabled={!selectedAgent}
+              disabled={!currentSelectedAgent}
             >
               第一人称
             </button>
@@ -1921,9 +2081,9 @@ export function VirtualSpace3D({
           <button
             onClick={toggleFullscreen}
             className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors text-gray-600"
-            title={externalIsFullscreen ? '退出全屏 (ESC)' : '全屏显示'}
+            title={isFullscreen ? '退出全屏 (ESC)' : '全屏显示'}
           >
-            {externalIsFullscreen ? (
+            {isFullscreen ? (
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -1942,9 +2102,108 @@ export function VirtualSpace3D({
       {/* 3D 渲染区域 */}
       <div
         ref={containerRef}
-        className="relative w-full rounded-lg border border-gray-200 overflow-hidden"
-        style={{ height: '600px' }}
+        className={`relative overflow-hidden ${isFullscreen ? 'fixed inset-0 z-[9999] rounded-none border-0' : 'w-full rounded-lg border border-gray-200'}`}
+        style={{ height: isFullscreen ? '100vh' : '600px' }}
       >
+        {/* 全屏模式控制栏 - 仅在真正全屏时显示 */}
+        {isFullscreen && (
+          <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between p-4 bg-gradient-to-b from-black/70 to-transparent">
+            <div className="text-white">
+              <div className="text-sm font-medium">3D 虚拟空间 - 全屏模式</div>
+              <div className="text-xs opacity-80">{agents.length} 个 Agent | {buildings.length} 个建筑</div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {/* 视角切换 */}
+              <div className="bg-white/20 backdrop-blur-sm rounded-lg p-1 flex items-center gap-1">
+                <button
+                  onClick={() => setCurrentViewMode('third-person')}
+                  className={`px-3 py-1 text-xs rounded-md transition-all ${
+                    viewMode === 'third-person'
+                      ? 'bg-white/30 text-white'
+                      : 'text-white/70 hover:text-white'
+                  }`}
+                >
+                  第三人称
+                </button>
+                <button
+                  onClick={() => setCurrentViewMode('second-person')}
+                  className={`px-3 py-1 text-xs rounded-md transition-all ${
+                    viewMode === 'second-person'
+                      ? 'bg-white/30 text-white'
+                      : 'text-white/70 hover:text-white'
+                  }`}
+                  disabled={!currentSelectedAgent}
+                >
+                  第二人称
+                </button>
+                <button
+                  onClick={() => setCurrentViewMode('first-person')}
+                  className={`px-3 py-1 text-xs rounded-md transition-all ${
+                    viewMode === 'first-person'
+                      ? 'bg-white/30 text-white'
+                      : 'text-white/70 hover:text-white'
+                  }`}
+                  disabled={!currentSelectedAgent}
+                >
+                  第一人称
+                </button>
+              </div>
+
+              {/* 退出全屏按钮 */}
+              <button
+                onClick={toggleFullscreen}
+                className="bg-white/20 backdrop-blur-sm rounded-lg px-4 py-2 text-white hover:bg-white/30 transition-colors flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                退出全屏 (ESC)
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Agent 选择器 - 全屏模式下显示在右侧 */}
+        {isFullscreen && sceneReady && (
+          <div className="absolute top-20 right-4 z-10 bg-black/70 backdrop-blur-sm rounded-lg p-3 text-white max-w-xs">
+            <div className="text-sm font-medium mb-2">👥 选择 Agent</div>
+            <div className="space-y-1 max-h-60 overflow-y-auto">
+              {agents.map(agent => {
+                const moodColor = moodColors[agent.mood] || '#6b7280';
+                const isSelected = agent.agent_id === currentSelectedAgent;
+                return (
+                  <button
+                    key={agent.agent_id}
+                    onClick={() => {
+                      setInternalSelectedAgent(agent.agent_id);
+                      if (onAgentClick) {
+                        onAgentClick(agent.agent_id);
+                      }
+                    }}
+                    className={`flex items-center gap-2 w-full px-2 py-1.5 rounded text-left transition-all ${
+                      isSelected
+                        ? 'bg-white/30 border border-white/50'
+                        : 'hover:bg-white/20 border border-transparent'
+                    }`}
+                  >
+                    <div className="w-3 h-3 rounded-full border-2 border-white/50" style={{ backgroundColor: moodColor }} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium truncate">{agent.agent_name}</div>
+                      <div className="text-xs opacity-70">能量 {agent.energy}%</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            {!currentSelectedAgent && (
+              <div className="text-xs text-gray-300 mt-2 text-center">
+                点击 Agent 选中后可用键盘控制
+              </div>
+            )}
+          </div>
+        )}
+
         {!sceneReady && !webGLError && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-100 z-10">
             <div className="w-8 h-8 border-2 border-world-400 border-t-transparent rounded-full animate-spin mb-3"></div>
@@ -1961,20 +2220,42 @@ export function VirtualSpace3D({
         )}
 
         {/* 键盘控制提示 - 仅在非移动端显示 */}
-        {sceneReady && selectedAgent && !isMobile && (
-          <div className="absolute bottom-4 left-4 z-10 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-3 text-white">
-            <div className="text-sm font-medium mb-2">🎮 键盘控制</div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-              <div>⬆️⬇️⬅️➡️ 移动</div>
-              <div>⎯ 跳跃</div>
-              <div className="col-span-2 text-gray-300">点击 Agent 选中后可控制</div>
+        {sceneReady && currentSelectedAgent && !isMobile && (
+          <div className={`absolute z-10 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-3 text-white ${
+            isFullscreen ? 'bottom-8 left-8 px-6 py-4' : 'bottom-4 left-4'
+          }`}>
+            <div className={`${isFullscreen ? 'text-base' : 'text-sm'} font-medium mb-2`}>🎮 键盘控制</div>
+            <div className={`grid ${isFullscreen ? 'grid-cols-3 gap-x-6 gap-y-2 text-sm' : 'grid-cols-2 gap-x-4 gap-y-1 text-xs'}`}>
+              <div className="flex items-center gap-2">
+                <span className={`${isFullscreen ? 'text-2xl' : 'text-base'}`}>⬆️</span>
+                <span>向上</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`${isFullscreen ? 'text-2xl' : 'text-base'}`}>⬇️</span>
+                <span>向下</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`${isFullscreen ? 'text-2xl' : 'text-base'}`}>⬅️</span>
+                <span>向左</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`${isFullscreen ? 'text-2xl' : 'text-base'}`}>➡️</span>
+                <span>向右</span>
+              </div>
+              <div className="flex items-center gap-2 col-span-2">
+                <span className={`${isFullscreen ? 'text-2xl' : 'text-base'}`}>⎯</span>
+                <span>跳跃</span>
+              </div>
             </div>
+            {isFullscreen && (
+              <div className="mt-2 text-xs text-gray-300">当前控制: {agents.find(a => a.agent_id === currentSelectedAgent)?.agent_name || '未知'}</div>
+            )}
           </div>
         )}
       </div>
 
       {/* Agent 列表 - 全屏模式下隐藏 */}
-      {!externalIsFullscreen && (
+      {!isFullscreen && (
         <div className="mt-4 grid grid-cols-5 gap-2">
         {agents.map(agent => {
           const moodColor = moodColors[agent.mood] || '#6b7280';
@@ -1988,7 +2269,7 @@ export function VirtualSpace3D({
                 }
               }}
               className={`flex items-center gap-2 p-2 rounded-lg border text-left transition-all ${
-                selectedAgent === agent.agent_id
+                currentSelectedAgent === agent.agent_id
                   ? 'border-world-500 bg-world-50'
                   : 'border-gray-200 hover:border-gray-300'
               }`}
@@ -2009,7 +2290,7 @@ export function VirtualSpace3D({
         <div className="mt-2 text-xs text-gray-500 flex items-center justify-between">
           <span>
             💡 左键拖动旋转 | 右键拖动平移 | 滚轮缩放
-            {selectedAgent && ` | 当前追踪: ${agents.find(a => a.agent_id === selectedAgent)?.agent_name}`}
+            {currentSelectedAgent && ` | 当前追踪: ${agents.find(a => a.agent_id === currentSelectedAgent)?.agent_name}`}
           </span>
           <span>
             {viewMode === 'first-person' && '🎮 第一人称视角'}
@@ -2047,7 +2328,7 @@ export function VirtualSpace3D({
                     ? 'bg-white/20 text-white'
                     : 'text-white/70 hover:text-white'
                 }`}
-                disabled={!selectedAgent}
+                disabled={!currentSelectedAgent}
               >
                 第二人称
               </button>
@@ -2058,7 +2339,7 @@ export function VirtualSpace3D({
                     ? 'bg-white/20 text-white'
                     : 'text-white/70 hover:text-white'
                 }`}
-                disabled={!selectedAgent}
+                disabled={!currentSelectedAgent}
               >
                 第一人称
               </button>
@@ -2079,122 +2360,6 @@ export function VirtualSpace3D({
       )}
     </div>
   );
-
-  // 全屏视图内容
-  const fullscreenView = (
-    <div className="fixed inset-0 z-[9999] bg-gray-900">
-      {/* 全屏头部控制栏 */}
-      <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between p-4 bg-black/50 backdrop-blur-sm">
-        <div className="text-white">
-          <div className="text-sm font-medium">3D 虚拟空间 - 全屏模式</div>
-          <div className="text-xs opacity-80">{agents.length} 个 Agent | {buildings.length} 个建筑</div>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* 视角切换 */}
-          <div className="bg-white/20 backdrop-blur-sm rounded-lg p-1 flex items-center gap-1">
-            <button
-              onClick={() => setCurrentViewMode('third-person')}
-              className={`px-3 py-1 text-xs rounded-md transition-all ${
-                viewMode === 'third-person'
-                  ? 'bg-white/30 text-white'
-                  : 'text-white/70 hover:text-white'
-              }`}
-            >
-              第三人称
-            </button>
-            <button
-              onClick={() => setCurrentViewMode('second-person')}
-              className={`px-3 py-1 text-xs rounded-md transition-all ${
-                viewMode === 'second-person'
-                  ? 'bg-white/30 text-white'
-                  : 'text-white/70 hover:text-white'
-              }`}
-              disabled={!selectedAgent}
-            >
-              第二人称
-            </button>
-            <button
-              onClick={() => setCurrentViewMode('first-person')}
-              className={`px-3 py-1 text-xs rounded-md transition-all ${
-                viewMode === 'first-person'
-                  ? 'bg-white/30 text-white'
-                  : 'text-white/70 hover:text-white'
-              }`}
-              disabled={!selectedAgent}
-            >
-              第一人称
-            </button>
-          </div>
-          {/* 退出全屏按钮 */}
-          <button
-            onClick={toggleFullscreen}
-            className="bg-white/20 backdrop-blur-sm rounded-lg px-4 py-2 text-white hover:bg-white/30 transition-colors flex items-center gap-2"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-            退出全屏 (ESC)
-          </button>
-        </div>
-      </div>
-
-      {/* 3D 渲染区域 - 全屏时填充整个屏幕 */}
-      <div
-        ref={containerRef}
-        className="absolute inset-0 rounded-none border-0 overflow-hidden"
-      >
-        {!sceneReady && !webGLError && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 z-10">
-            <div className="w-8 h-8 border-2 border-white/30 border-t-transparent rounded-full animate-spin mb-3"></div>
-            <p className="text-white">正在初始化 3D 场景...</p>
-          </div>
-        )}
-        {webGLError && (
-          <div className="absolute inset-0 flex items-center justify-center bg-red-900 z-10">
-            <div className="text-center">
-              <p className="text-white font-medium">WebGL 不可用</p>
-              <p className="text-sm text-white/70 mt-1">请使用支持硬件加速的浏览器</p>
-            </div>
-          </div>
-        )}
-
-        {/* 键盘控制提示 - 全屏模式，仅在非移动端显示 */}
-        {sceneReady && selectedAgent && !isMobile && (
-          <div className="absolute bottom-8 left-8 z-10 bg-black/70 backdrop-blur-sm rounded-lg px-6 py-4 text-white">
-            <div className="text-base font-medium mb-3">🎮 键盘控制</div>
-            <div className="grid grid-cols-3 gap-x-6 gap-y-2 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="text-2xl">⬆️</span>
-                <span>向上</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-2xl">⬇️</span>
-                <span>向下</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-2xl">⬅️</span>
-                <span>向左</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-2xl">➡️</span>
-                <span>向右</span>
-              </div>
-              <div className="flex items-center gap-2 col-span-2">
-                <span className="text-2xl">⎯</span>
-                <span>跳跃</span>
-              </div>
-            </div>
-            <div className="mt-2 text-xs text-gray-300">当前控制: {agents.find(a => a.agent_id === selectedAgent)?.agent_name || '未知'}</div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-
-  // 根据全屏状态决定渲染方式
-  if (externalIsFullscreen) {
-    return createPortal(fullscreenView, document.body);
-  }
 
   return normalView;
 }

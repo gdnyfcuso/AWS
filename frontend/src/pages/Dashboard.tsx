@@ -7,6 +7,7 @@ import { EventLog } from '../components/EventLog';
 import { AgentList } from '../components/AgentList';
 import { RealWorldMap } from '../components/RealWorldMap';
 import { VirtualSpace3D } from '../components/VirtualSpace3D';
+import { ApiGuideLink } from '../components/ApiGuideLink';
 import { useWorldState } from '../hooks/useWorldState';
 import { useWorldMap } from '../hooks/useWorldMap';
 import { useAgentRelationships } from '../hooks/useAgentRelationships';
@@ -178,20 +179,24 @@ export function Dashboard() {
         </div>
 
         {/* 欢迎横幅 */}
-        <div className={`mb-6 ${responsive.cardPadding} bg-gradient-to-r from-world-500 to-world-700 rounded-xl text-white`}>
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className={`${responsive.pageTitle} font-bold mb-2`}>欢迎来到 Agent World</h1>
-              <p className="text-world-100">
-                当前有 {worldState?.active_agents || 0} 个 AI Agent 正在虚拟世界中自主生活
-              </p>
-            </div>
-            {mobile.isMobile && (
-              <div className="flex items-center gap-2 bg-white/20 rounded-lg px-3 py-2">
-                <Smartphone className="w-4 h-4" />
-                <span className="text-sm">手机模式</span>
+        <div className={`mb-4 ${responsive.cardPadding} bg-gradient-to-r from-world-500 to-world-700 rounded-xl text-white`}>
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className={`${responsive.pageTitle} font-bold mb-2`}>欢迎来到 Agent World</h1>
+                <p className="text-world-100">
+                  当前有 {worldState?.active_agents || 0} 个 AI Agent 正在虚拟世界中自主生活
+                </p>
               </div>
-            )}
+              {mobile.isMobile && (
+                <div className="flex items-center gap-2 bg-white/20 rounded-lg px-3 py-2">
+                  <Smartphone className="w-4 h-4" />
+                  <span className="text-sm">手机模式</span>
+                </div>
+              )}
+            </div>
+            {/* API 使用指南链接 */}
+            <ApiGuideLink inBanner={true} />
           </div>
         </div>
 
@@ -227,7 +232,7 @@ export function Dashboard() {
         <div className="mb-6">
           {viewMode === 'realworld-map' && (
             isLoadingGeo ? (
-              <div className="bg-white rounded-xl border border-gray-200 p-6 text-center">
+              <div className="bg-white rounded-xl border border-gray-200 p-6 text-center" style={{ minHeight: '500px' }}>
                 <p className="text-gray-500">加载地理数据...</p>
               </div>
             ) : geographicAgents.length > 0 ? (
@@ -236,16 +241,16 @@ export function Dashboard() {
                 onAgentClick={handleAgentClick}
               />
             ) : (
-              <div className="bg-white rounded-xl border border-gray-200 p-6 text-center">
+              <div className="bg-white rounded-xl border border-gray-200 p-6 text-center" style={{ minHeight: '500px' }}>
                 <p className="text-gray-500">暂无地理位置数据，请注册 Agent 时提供位置信息</p>
               </div>
             )
           )}
 
           {viewMode === 'virtual-3d' && (
-            <div className="relative bg-gray-900 rounded-xl overflow-hidden border border-gray-300" style={{ height: responsive.view3dHeight }}>
-              {/* 当前城市信息显示 */}
-              {cityTerrainData.city && (
+            <>
+              {/* 当前城市信息显示 - 仅在非全屏时显示 */}
+              {cityTerrainData.city && !is3DFullscreen && (
                 <div className="absolute top-4 left-4 z-10 bg-black/60 text-white px-4 py-2 rounded-lg backdrop-blur-sm">
                   <div className="flex items-center gap-3">
                     <span className="text-sm">
@@ -287,7 +292,7 @@ export function Dashboard() {
                 isMobile={mobile.isMobile}
                 isTouchDevice={mobile.isMobile}
               />
-            </div>
+            </>
           )}
         </div>
 

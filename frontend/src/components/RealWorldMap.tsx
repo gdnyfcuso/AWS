@@ -251,8 +251,8 @@ export function RealWorldMap({ agents, onAgentClick }: RealWorldMapProps) {
       {/* 地图容器 */}
       <div
         ref={mapContainerRef}
-        className="relative w-full h-96 rounded-lg border border-gray-200 overflow-hidden bg-blue-50"
-        style={{ minHeight: '384px' }}
+        className="relative w-full rounded-lg border border-gray-200 overflow-hidden bg-blue-50"
+        style={{ height: '550px', minHeight: '550px' }}
       >
         {!mapReady && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
