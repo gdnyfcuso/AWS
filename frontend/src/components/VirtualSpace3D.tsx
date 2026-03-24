@@ -309,7 +309,9 @@ export function VirtualSpace3D({
   const agentPhysicsRef = useRef<Map<string, { velocityY: number; isJumping: boolean; groundY: number }>>(new Map());
   // Agent 旋转角度（用于键盘控制转向）
   const agentRotationsRef = useRef<Map<string, number>>(new Map());
-  // 当前视角模式
+  // Agent 交流通道
+  const communicationChannelsRef = useRef<Map<string, THREE.Line>>(new Map());
+  const COMMUNICATION_RANGE = 10; // 交流范围（米）
   const [currentViewMode, setCurrentViewMode] = useState<ViewMode>('third-person');
   // 使用 ref 存储最新的视角模式，避免闭包陷阱
   const viewModeRef = useRef<ViewMode>(externalViewMode || 'third-person');
@@ -1418,6 +1420,80 @@ export function VirtualSpace3D({
     animate();
   };
 
+  // 更新 Agent 交流通道
+  const updateCommunicationChannels = () => {
+    if (!sceneRef.current || !agentMeshesRef.current) return;
+
+    const scene = sceneRef.current as any;
+    const channelsGroup = (scene as any).channelsGroup as THREE.Group;
+
+    // 如果交流通道组不存在，创建它
+    if (!channelsGroup) {
+      const group = new THREE.Group();
+      group.name = 'communication_channels';
+      (scene as any).channelsGroup = group;
+      scene.add(group);
+    }
+
+    // 获取所有 Agent 的位置
+    const agents: Array<{ id: string; position: THREE.Vector3 }> = [];
+    agentMeshesRef.current.children.forEach((agentGroup: THREE.Group) => {
+      if (agentGroup.userData.agentId) {
+        agents.push({
+          id: agentGroup.userData.agentId,
+          position: agentGroup.position.clone(),
+        });
+      }
+    });
+
+    // 检测所有 Agent 对之间的距离
+    const activeChannels = new Set<string>();
+    const materials = [
+      new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.6 }),
+      new THREE.LineBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.6 }),
+      new THREE.LineBasicMaterial({ color: 0xff6b6b, transparent: true, opacity: 0.6 }),
+      new THREE.LineBasicMaterial({ color: 0xa78bfa, transparent: true, opacity: 0.6 }),
+    ];
+
+    for (let i = 0; i < agents.length; i++) {
+      for (let j = i + 1; j < agents.length; j++) {
+        const agent1 = agents[i];
+        const agent2 = agents[j];
+        const distance = agent1.position.distanceTo(agent2.position);
+
+        // 如果距离 < 10 米，创建交流通道
+        if (distance < COMMUNICATION_RANGE) {
+          const channelId = `${agent1.id}-${agent2.id}`;
+          const channelKey = `${agent1.id}-${agent2.id}`;
+          activeChannels.add(channelKey);
+
+          // 如果通道不存在，创建它
+          if (!communicationChannelsRef.current.has(channelKey)) {
+            const points = [agent1.position, agent2.position];
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = materials[Math.floor(Math.random() * materials.length)];
+            const line = new THREE.Line(geometry, material);
+            line.name = `channel_${channelId}`;
+            channelsGroup.add(line);
+            communicationChannelsRef.current.set(channelKey, line);
+
+            console.log(`[Communication] ${agent1.id} <-> ${agent2.id}: ${distance.toFixed(1)}m`);
+          }
+        }
+      }
+    }
+
+    // 移除不再活跃的通道
+    communicationChannelsRef.current.forEach((line, key) => {
+      if (!activeChannels.has(key)) {
+        channelsGroup.remove(line);
+        line.geometry.dispose();
+        (line.material as THREE.Material).dispose();
+        communicationChannelsRef.current.delete(key);
+      }
+    });
+  };
+
   // 视角模式更新函数
   const updateCameraForViewMode = () => {
     if (!cameraRef.current || !controlsRef.current || !agentMeshesRef.current) return;
@@ -1873,6 +1949,9 @@ export function VirtualSpace3D({
           }
         });
       }
+
+      // 检测 Agent 交流通道（距离 < 10 米）
+      updateCommunicationChannels();
 
       // 更新相机视角
       updateCameraForViewMode();

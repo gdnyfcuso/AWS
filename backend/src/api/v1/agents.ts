@@ -813,4 +813,89 @@ async function executeAction(
   }
 }
 
+/**
+ * POST /api/v1/agents/:agent_id/communicate
+ * Agent 与附近的其他 Agent 交流
+ */
+router.post(
+  '/:agent_id/communicate',
+  authenticateApiKey,
+  async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const { agent_id } = req.params;
+      const schema = z.object({
+        message: z.string().min(1).max(500),
+        target_agent_id: z.string().optional(),
+      });
+
+      const validated = await schema.parseAsync(req.body);
+
+      // 验证权限：只能用自己的 API key
+      if (req.agent!.agent_id !== agent_id) {
+        return res.status(403).json({
+          success: false,
+          error: 'You can only send messages as your own agent',
+          error_code: ErrorCode.ACTION_NOT_ALLOWED,
+        });
+      }
+
+      const state = await agentManager.getAgentState(agent_id);
+
+      if (!state) {
+        return res.status(404).json({
+          success: false,
+          error: 'Agent not found',
+          error_code: ErrorCode.AGENT_NOT_FOUND,
+        });
+      }
+
+      // 获取附近的 Agent（10米范围内）
+      const nearbyAgents = await agentManager.getNearbyAgents(state.location_id, agent_id);
+      const nearbyAgentIds = nearbyAgents.map(a => a.agent_id);
+
+      // 如果指定了目标，检查目标是否在附近
+      if (validated.target_agent_id) {
+        if (!nearbyAgentIds.includes(validated.target_agent_id)) {
+          return res.status(400).json({
+            success: false,
+            error: 'Target agent is not nearby (must be within 10m)',
+            error_code: ErrorCode.ACTION_NOT_ALLOWED,
+          });
+        }
+      }
+
+      // 创建交流事件
+      await eventManager.createEvent({
+        event_type: 'communication_event',
+        data: {
+          type: 'agent_communication',
+          from_agent: { agent_id: agent_id, name: req.agent?.agent_name || 'Unknown' },
+          message: validated.message,
+          target_agent: validated.target_agent_id || null,
+          nearby_agents: nearbyAgentIds,
+        },
+        agent_id: validated.target_agent_id || nearbyAgentIds[0] || agent_id,
+      });
+
+      // 记录行动
+      await recordAction(agent_id, 'communicate', validated, true, {
+        message: validated.message,
+        nearby_agents: nearbyAgentIds,
+        target_agent: validated.target_agent_id,
+      });
+
+      res.json({
+        success: true,
+        result: {
+          message: `你的消息 "${validated.message}" 已发送给附近的其他 Agent`,
+          nearby_agents: nearbyAgentIds,
+          communication_count: nearbyAgentIds.length,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 export default router;
