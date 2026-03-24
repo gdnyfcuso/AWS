@@ -307,6 +307,8 @@ export function VirtualSpace3D({
   const keysPressedRef = useRef<Set<string>>(new Set());
   // Agent 跳跃物理状态: velocityY (Y轴速度), isJumping (是否跳跃中), groundY (地面高度)
   const agentPhysicsRef = useRef<Map<string, { velocityY: number; isJumping: boolean; groundY: number }>>(new Map());
+  // Agent 旋转角度（用于键盘控制转向）
+  const agentRotationsRef = useRef<Map<string, number>>(new Map());
   // 当前视角模式
   const [currentViewMode, setCurrentViewMode] = useState<ViewMode>('third-person');
   // 使用 ref 存储最新的视角模式，避免闭包陷阱
@@ -947,8 +949,9 @@ export function VirtualSpace3D({
         }
       };
 
-      // 初始化目标位置
+      // 初始化目标位置和旋转角度
       agentTargetPositionsRef.current.set(agent.agent_id, { x: agent.x, y: agent.y, z: agent.z });
+      agentRotationsRef.current.set(agent.agent_id, agentGroup.rotation.y);
 
       group.add(agentGroup);
     });
@@ -1502,25 +1505,53 @@ export function VirtualSpace3D({
               });
             }
 
-            // 键盘控制的移动速度
-            const moveSpeed = 0.8;
-            let keyboardMoveX = 0;
-            let keyboardMoveZ = 0;
+            // 键盘控制的移动速度和转向速度
+            const moveSpeed = 0.5;
+            const turnSpeed = 0.05;
+
+            // 初始化 Agent 的旋转角度
+            if (!agentRotationsRef.current.has(agentId)) {
+              agentRotationsRef.current.set(agentId, agentGroup.rotation.y);
+            }
+            const currentRotation = agentRotationsRef.current.get(agentId)!;
 
             // 如果是选中的 Agent，响应键盘输入
             if (isSelected) {
-              if (keysPressedRef.current.has('ArrowUp')) keyboardMoveZ -= moveSpeed;
-              if (keysPressedRef.current.has('ArrowDown')) keyboardMoveZ += moveSpeed;
-              if (keysPressedRef.current.has('ArrowLeft')) keyboardMoveX -= moveSpeed;
-              if (keysPressedRef.current.has('ArrowRight')) keyboardMoveX += moveSpeed;
+              let newRotation = currentRotation;
+              let keyboardMoveX = 0;
+              let keyboardMoveZ = 0;
+
+              // 左右键控制转向
+              if (keysPressedRef.current.has('ArrowLeft')) {
+                newRotation += turnSpeed;
+              }
+              if (keysPressedRef.current.has('ArrowRight')) {
+                newRotation -= turnSpeed;
+              }
+
+              // 上下键沿当前朝向移动
+              if (keysPressedRef.current.has('ArrowUp')) {
+                keyboardMoveX = -Math.sin(newRotation) * moveSpeed;
+                keyboardMoveZ = -Math.cos(newRotation) * moveSpeed;
+              }
+              if (keysPressedRef.current.has('ArrowDown')) {
+                keyboardMoveX = Math.sin(newRotation) * moveSpeed;
+                keyboardMoveZ = Math.cos(newRotation) * moveSpeed;
+              }
+
+              // 更新旋转角度
+              agentRotationsRef.current.set(agentId, newRotation);
+
+              // 应用旋转到角色模型
+              agentGroup.rotation.y = newRotation;
 
               // 更新目标位置以响应键盘控制
               if (keyboardMoveX !== 0 || keyboardMoveZ !== 0) {
                 const currentPos = agentGroup.position;
                 const newTargetPos = {
-                  x: currentPos.x + keyboardMoveX * 5, // 预测位置
+                  x: currentPos.x + keyboardMoveX * 10, // 预测位置
                   y: currentPos.y,
-                  z: currentPos.z + keyboardMoveZ * 5,
+                  z: currentPos.z + keyboardMoveZ * 10,
                 };
                 agentTargetPositionsRef.current.set(agentId, newTargetPos);
               }
@@ -1546,16 +1577,6 @@ export function VirtualSpace3D({
               // 线性插值到目标位置
               agentGroup.position.x += dx * lerpFactor;
               agentGroup.position.z += dz * lerpFactor;
-
-              // 移动时让 Agent 面向目标方向
-              if (isMoving) {
-                const targetAngle = Math.atan2(dx, dz);
-                agentGroup.rotation.y = THREE.MathUtils.lerp(
-                  agentGroup.rotation.y,
-                  targetAngle,
-                  0.15
-                );
-              }
             }
 
             // 跳跃物理模拟
