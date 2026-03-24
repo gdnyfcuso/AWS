@@ -627,7 +627,8 @@ export function VirtualSpace3D({
     // 添加新的 Agent - 动漫 Q 版风格
     agents.forEach(agent => {
       const agentGroup = new THREE.Group();
-      agentGroup.position.set(agent.x, agent.y + 1, agent.z);
+      // Q 版 Agent 直接放在地面上（y = agent.y）
+      agentGroup.position.set(agent.x, agent.y, agent.z);
 
       const moodColor = moodColors[agent.mood] || '#6b7280';
       const skinColor = 0xffe0c0; // 更嫩的肤色
@@ -659,30 +660,30 @@ export function VirtualSpace3D({
       const legGeometry = new THREE.CapsuleGeometry(0.5, 0.8, 4, 8);
       const legMaterial = new THREE.MeshStandardMaterial({ color: 0x444466 });
       const leftLeg = new THREE.Mesh(legGeometry, legMaterial);
-      leftLeg.position.set(-0.4, 0.9, 0);
+      leftLeg.position.set(-0.4, 0.6, 0);  // 降低腿部位置
       leftLeg.castShadow = true;
       agentGroup.add(leftLeg);
-      leftLeg.userData = { part: 'leftLeg', initialY: 0.9 };
+      leftLeg.userData = { part: 'leftLeg', initialY: 0.6 };
 
       // 右腿
       const rightLeg = new THREE.Mesh(legGeometry, legMaterial);
-      rightLeg.position.set(0.4, 0.9, 0);
+      rightLeg.position.set(0.4, 0.6, 0);  // 降低腿部位置
       rightLeg.castShadow = true;
       agentGroup.add(rightLeg);
-      rightLeg.userData = { part: 'rightLeg', initialY: 0.9 };
+      rightLeg.userData = { part: 'rightLeg', initialY: 0.6 };
 
       // === Q版鞋子（圆润）===
       const shoeGeometry = new THREE.SphereGeometry(0.45, 16, 16);
       shoeGeometry.scale(1.3, 0.7, 1.5);
       const shoeMaterial = new THREE.MeshStandardMaterial({ color: 0x222233 });
       const leftShoe = new THREE.Mesh(shoeGeometry, shoeMaterial);
-      leftShoe.position.set(-0.4, 0.25, 0.15);
+      leftShoe.position.set(-0.4, 0.15, 0.15);  // 鞋子贴地
       leftShoe.castShadow = true;
       agentGroup.add(leftShoe);
       leftShoe.userData = { part: 'leftShoe', parent: 'leftLeg' };
 
       const rightShoe = new THREE.Mesh(shoeGeometry, shoeMaterial);
-      rightShoe.position.set(0.4, 0.25, 0.15);
+      rightShoe.position.set(0.4, 0.15, 0.15);  // 鞋子贴地
       rightShoe.castShadow = true;
       agentGroup.add(rightShoe);
       rightShoe.userData = { part: 'rightShoe', parent: 'rightLeg' };
@@ -1087,6 +1088,7 @@ export function VirtualSpace3D({
     // 添加新建筑
     buildings.forEach(building => {
       const buildingGroup = new THREE.Group();
+      // 建筑物位置：y + height/2 使建筑物底部在 y 上
       buildingGroup.position.set(building.x, building.y + building.height / 2, building.z);
       buildingGroup.userData = { isBuilding: true };
 
