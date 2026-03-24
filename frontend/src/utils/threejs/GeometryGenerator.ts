@@ -176,7 +176,7 @@ export class GeometryGenerator {
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.rotation.x = -Math.PI / 2;
-    mesh.position.y = 0.5;
+    mesh.position.y = -0.5; // 嵌入地下
 
     return mesh;
   }

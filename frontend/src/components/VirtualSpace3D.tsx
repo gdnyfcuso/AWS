@@ -1203,7 +1203,7 @@ export function VirtualSpace3D({
 
               const midX = (path[i].x + path[i + 1].x) / 2;
               const midZ = (path[i].z + path[i + 1].z) / 2;
-              segment.position.set(midX, 0.5, midZ);
+              segment.position.set(midX, -0.5, midZ); // 河流嵌入地下
               const angle = Math.atan2(path[i + 1].z - path[i].z, path[i + 1].x - path[i].x);
               segment.rotation.y = angle;
               riverGroup.add(segment);
@@ -1627,25 +1627,55 @@ export function VirtualSpace3D({
               // 应用旋转到角色模型
               agentGroup.rotation.y = newRotation;
 
-              // 更新目标位置以响应键盘控制
+              // 直接应用移动（不通过目标位置插值）
               if (keyboardMoveX !== 0 || keyboardMoveZ !== 0) {
                 const currentPos = agentGroup.position;
-                const newTargetPos = {
-                  x: currentPos.x + keyboardMoveX * 10, // 预测位置
-                  y: currentPos.y,
-                  z: currentPos.z + keyboardMoveZ * 10,
-                };
-                agentTargetPositionsRef.current.set(agentId, newTargetPos);
+                const newX = currentPos.x + keyboardMoveX;
+                const newZ = currentPos.z + keyboardMoveZ;
+
+                // 碰撞检测
+                const collisionRadius = 3.5;
+                let hasCollision = false;
+
+                if (agentMeshesRef.current) {
+                  for (const otherAgent of agentMeshesRef.current.children) {
+                    if (otherAgent instanceof THREE.Group && otherAgent.userData.agentId !== agentId) {
+                      const otherPos = otherAgent.position;
+                      const distToOther = Math.sqrt(
+                        Math.pow(newX - otherPos.x, 2) +
+                        Math.pow(newZ - otherPos.z, 2)
+                      );
+
+                      if (distToOther < collisionRadius) {
+                        hasCollision = true;
+                        console.log(`[Collision] Agent ${agentId} collision detected`);
+                        break;
+                      }
+                    }
+                  }
+                }
+
+                // 只有在没有碰撞时才更新位置
+                if (!hasCollision) {
+                  agentGroup.position.x = newX;
+                  agentGroup.position.z = newZ;
+                  // 同步更新目标位置，保持一致
+                  agentTargetPositionsRef.current.set(agentId, {
+                    x: newX,
+                    y: currentPos.y,
+                    z: newZ
+                  });
+                }
               }
             }
 
-            // 平滑移动 Agent 到目标位置
+            // 平滑移动非选中 Agent 到目标位置
             let isMoving = false;
 
-            if (agentId && agentTargetPositionsRef.current.has(agentId)) {
+            if (!isSelected && agentId && agentTargetPositionsRef.current.has(agentId)) {
               const targetPos = agentTargetPositionsRef.current.get(agentId)!;
               const currentPos = agentGroup.position;
-              const lerpFactor = isSelected ? 0.08 : 0.02; // 选中时移动更快
+              const lerpFactor = 0.02;
 
               // 计算到目标的距离
               const dx = targetPos.x - currentPos.x;
@@ -1656,47 +1686,14 @@ export function VirtualSpace3D({
               isMoving = distance > 0.5;
               agentIsMovingRef.current.set(agentId, isMoving);
 
-              // 计算预测的新位置
-              const newX = currentPos.x + dx * lerpFactor;
-              const newZ = currentPos.z + dz * lerpFactor;
-
-              // 碰撞检测：检查新位置是否会与其他 Agent 碰撞
-              const collisionRadius = 3.5; // Q版 Agent 的碰撞半径
-              let hasCollision = false;
-
-              if (agentMeshesRef.current) {
-                for (const otherAgent of agentMeshesRef.current.children) {
-                  if (otherAgent instanceof THREE.Group && otherAgent.userData.agentId !== agentId) {
-                    const otherPos = otherAgent.position;
-                    const distToOther = Math.sqrt(
-                      Math.pow(newX - otherPos.x, 2) +
-                      Math.pow(newZ - otherPos.z, 2)
-                    );
-
-                    if (distToOther < collisionRadius) {
-                      hasCollision = true;
-                      // 如果是键盘控制的 Agent，停止移动
-                      if (isSelected) {
-                        agentTargetPositionsRef.current.set(agentId, {
-                          x: currentPos.x,
-                          y: currentPos.y,
-                          z: currentPos.z
-                        });
-                      }
-                      break;
-                    }
-                  }
-                }
-              }
-
-              // 只有在没有碰撞时才更新位置
-              if (!hasCollision) {
-                agentGroup.position.x = newX;
-                agentGroup.position.z = newZ;
-              } else if (isSelected) {
-                // 碰撞时显示调试信息
-                console.log(`[Collision] Agent ${agentId} collision detected, stopping movement`);
-              }
+              // 线性插值到目标位置
+              agentGroup.position.x += dx * lerpFactor;
+              agentGroup.position.z += dz * lerpFactor;
+            } else if (isSelected) {
+              // 选中的 Agent：检查是否在移动（用于动画）
+              const keysMoving = keysPressedRef.current.has('ArrowUp') || keysPressedRef.current.has('ArrowDown');
+              isMoving = keysMoving;
+              agentIsMovingRef.current.set(agentId, isMoving);
             }
 
             // 跳跃物理模拟
