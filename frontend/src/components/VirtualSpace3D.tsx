@@ -1040,13 +1040,19 @@ export function VirtualSpace3D({
 
         const data = await response.json();
 
-        // 更新目标位置
+        // 更新目标位置 - 但不覆盖当前选中的 Agent（键盘控制）
+        const selectedAgent = currentSelectedAgentRef.current;
         data.agents.forEach((agent: any) => {
-          agentTargetPositionsRef.current.set(agent.agent_id, {
-            x: agent.x,
-            y: agent.y,
-            z: agent.z
-          });
+          // 如果是当前选中的 Agent，不更新位置（由键盘控制）
+          if (agent.agent_id !== selectedAgent) {
+            agentTargetPositionsRef.current.set(agent.agent_id, {
+              x: agent.x,
+              y: agent.y,
+              z: agent.z
+            });
+          } else {
+            console.log(`[Poll] Skipping selected agent ${agent.agent_id}, keeping keyboard control`);
+          }
         });
       } catch (error) {
         console.error('Error polling agent positions:', error);
@@ -1465,6 +1471,39 @@ export function VirtualSpace3D({
         controlsRef.current.enableRotate = true;
         controlsRef.current.minDistance = 15;
         controlsRef.current.maxDistance = 150;
+        // 第三人称模式：相机跟随选中的 Agent
+        if (trackedAgent) {
+          // 平滑移动相机 target 到 Agent 位置
+          const currentTarget = controlsRef.current.target;
+          const targetLerpFactor = 0.05;
+          const newTargetX = currentTarget.x + (agentPos.x - currentTarget.x) * targetLerpFactor;
+          const newTargetY = currentTarget.y + ((agentPos.y + 2) - currentTarget.y) * targetLerpFactor;
+          const newTargetZ = currentTarget.z + (agentPos.z - currentTarget.z) * targetLerpFactor;
+          currentTarget.set(newTargetX, newTargetY, newTargetZ);
+
+          // 相机位置也跟随，但保持相对距离
+          const currentCameraPos = cameraRef.current.position;
+          const relativeOffset = new THREE.Vector3(
+            currentCameraPos.x - currentTarget.x,
+            currentCameraPos.y - currentTarget.y,
+            currentCameraPos.z - currentTarget.z
+          );
+          // 限制最大偏移距离，保持相机在一定范围内
+          const maxDistance = 50;
+          if (relativeOffset.length() > maxDistance) {
+            relativeOffset.normalize().multiplyScalar(maxDistance);
+            cameraRef.current.position.set(
+              currentTarget.x + relativeOffset.x,
+              currentTarget.y + relativeOffset.y,
+              currentTarget.z + relativeOffset.z
+            );
+          }
+
+          // 调试日志
+          if (Math.random() < 0.01) { // 偶尔打印
+            console.log(`[Camera] Tracking agent ${trackedId}: agentPos=(${agentPos.x.toFixed(1)}, ${agentPos.z.toFixed(1)}), target=(${newTargetX.toFixed(1)}, ${newTargetZ.toFixed(1)})`);
+          }
+        }
         break;
     }
   };
