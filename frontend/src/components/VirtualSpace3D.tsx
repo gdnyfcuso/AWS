@@ -1415,8 +1415,8 @@ export function VirtualSpace3D({
 
     // 使用 ref 获取最新的视角模式，避免闭包陷阱
     const mode = viewModeRef.current;
-    // 优先使用外部传入的 currentSelectedAgentId，其次使用内部状态
-    const trackedId = trackedAgentRef.current || currentSelectedAgentId || currentSelectedAgent;
+    // 优先使用外部传入的 currentSelectedAgentId，其次使用内部状态的 ref
+    const trackedId = trackedAgentRef.current || currentSelectedAgentId || currentSelectedAgentRef.current;
 
     // If no tracked agent for first/second person mode, fall back to third-person behavior
     if (!trackedId && mode !== 'third-person') {
@@ -1601,12 +1601,14 @@ export function VirtualSpace3D({
 
               // 上下键沿当前朝向移动
               if (keysPressedRef.current.has('ArrowUp')) {
-                keyboardMoveX = -Math.sin(newRotation) * moveSpeed;
-                keyboardMoveZ = -Math.cos(newRotation) * moveSpeed;
-              }
-              if (keysPressedRef.current.has('ArrowDown')) {
+                // 前进：沿当前朝向移动
                 keyboardMoveX = Math.sin(newRotation) * moveSpeed;
                 keyboardMoveZ = Math.cos(newRotation) * moveSpeed;
+              }
+              if (keysPressedRef.current.has('ArrowDown')) {
+                // 后退：沿相反方向移动
+                keyboardMoveX = -Math.sin(newRotation) * moveSpeed;
+                keyboardMoveZ = -Math.cos(newRotation) * moveSpeed;
               }
 
               // 调试日志
