@@ -392,6 +392,15 @@ router.post(
 
       const validated = await schema.parseAsync(req.body);
 
+      // 验证请求者是否就是要断开连接的 Agent
+      if (req.agent!.agent_id !== agent_id) {
+        return res.status(403).json({
+          success: false,
+          error: 'You can only disconnect your own agent',
+          error_code: ErrorCode.PERMISSION_DENIED,
+        });
+      }
+
       const success = await agentManager.disconnectAgent(agent_id, validated.reason);
 
       if (success) {
