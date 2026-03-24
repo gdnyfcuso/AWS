@@ -131,6 +131,7 @@ export class GeometryGenerator {
    * 创建山丘
    */
   createHill(height: number, radius: number): THREE.Mesh {
+    // 使用半球几何体，只创建上半部分
     const geometry = new THREE.SphereGeometry(radius, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
 
     // 压扁使其看起来像山丘
@@ -143,6 +144,8 @@ export class GeometryGenerator {
     });
 
     const mesh = new THREE.Mesh(geometry, material);
+    // 将山丘底部移动到 y=0（半球中心需要向下调整）
+    mesh.position.y = 0;
     return mesh;
   }
 

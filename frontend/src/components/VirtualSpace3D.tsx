@@ -1221,7 +1221,9 @@ export function VirtualSpace3D({
       }
 
       if (mesh) {
-        mesh.position.set(feature.position.x, feature.position.y, feature.position.z);
+        // 山和山丘应该放在地面上（y=0），忽略后端返回的 y 坐标
+        const yPos = (feature.type === 'mountain' || feature.type === 'hill') ? 0 : feature.position.y;
+        mesh.position.set(feature.position.x, yPos, feature.position.z);
         mesh.name = feature.name || `Terrain_${feature.id}`;
         mesh.castShadow = true;
         mesh.receiveShadow = true;
