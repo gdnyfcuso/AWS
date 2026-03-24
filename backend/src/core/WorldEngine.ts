@@ -116,8 +116,8 @@ export class WorldEngine {
     });
     this.behaviorLoop.start(this.timeSystem.getCurrentTime());
 
-    // 启动 Agent 模拟器
-    getSimulator().start(30); // 每30秒模拟一次行为
+    // 禁用 Agent 模拟器 - Agent 只由键盘控制
+    // getSimulator().start(30); // 每30秒模拟一次行为
 
     this.running = true;
     logger.info('WorldEngine started successfully');

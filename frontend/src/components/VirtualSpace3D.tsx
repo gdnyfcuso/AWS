@@ -1224,8 +1224,16 @@ export function VirtualSpace3D({
       }
 
       if (mesh) {
-        // 山和山丘应该放在地面上（y=0），忽略后端返回的 y 坐标
-        const yPos = (feature.type === 'mountain' || feature.type === 'hill') ? 0 : feature.position.y;
+        // 山和山丘应该放在地面上（y=0）
+        // 河流已经在 createWater 中设置了正确的位置（-0.5）
+        // 水面也已经在 createWater 中设置了位置
+        let yPos = feature.position.y;
+        if (feature.type === 'mountain' || feature.type === 'hill') {
+          yPos = 0;
+        } else if (feature.type === 'water' || feature.type === 'river') {
+          // 河流和水面的位置已经在创建时设置，这里不覆盖
+          yPos = 0;
+        }
         mesh.position.set(feature.position.x, yPos, feature.position.z);
         mesh.name = feature.name || `Terrain_${feature.id}`;
         mesh.castShadow = true;
@@ -1669,7 +1677,7 @@ export function VirtualSpace3D({
               }
             }
 
-            // 平滑移动非选中 Agent 到目标位置
+            // 平滑移动非选中 Agent 到目标位置（带碰撞检测）
             let isMoving = false;
 
             if (!isSelected && agentId && agentTargetPositionsRef.current.has(agentId)) {
@@ -1686,9 +1694,42 @@ export function VirtualSpace3D({
               isMoving = distance > 0.5;
               agentIsMovingRef.current.set(agentId, isMoving);
 
-              // 线性插值到目标位置
-              agentGroup.position.x += dx * lerpFactor;
-              agentGroup.position.z += dz * lerpFactor;
+              // 计算预测的新位置
+              const newX = currentPos.x + dx * lerpFactor;
+              const newZ = currentPos.z + dz * lerpFactor;
+
+              // 碰撞检测
+              const collisionRadius = 3.5;
+              let hasCollision = false;
+
+              if (agentMeshesRef.current) {
+                for (const otherAgent of agentMeshesRef.current.children) {
+                  if (otherAgent instanceof THREE.Group && otherAgent.userData.agentId !== agentId) {
+                    const otherPos = otherAgent.position;
+                    const distToOther = Math.sqrt(
+                      Math.pow(newX - otherPos.x, 2) +
+                      Math.pow(newZ - otherPos.z, 2)
+                    );
+
+                    if (distToOther < collisionRadius) {
+                      hasCollision = true;
+                      // 停止移动这个 Agent
+                      agentTargetPositionsRef.current.set(agentId, {
+                        x: currentPos.x,
+                        y: currentPos.y,
+                        z: currentPos.z
+                      });
+                      break;
+                    }
+                  }
+                }
+              }
+
+              // 只有在没有碰撞时才更新位置
+              if (!hasCollision) {
+                agentGroup.position.x = newX;
+                agentGroup.position.z = newZ;
+              }
             } else if (isSelected) {
               // 选中的 Agent：检查是否在移动（用于动画）
               const keysMoving = keysPressedRef.current.has('ArrowUp') || keysPressedRef.current.has('ArrowDown');
