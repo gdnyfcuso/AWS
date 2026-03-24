@@ -1651,9 +1651,47 @@ export function VirtualSpace3D({
               isMoving = distance > 0.5;
               agentIsMovingRef.current.set(agentId, isMoving);
 
-              // 线性插值到目标位置
-              agentGroup.position.x += dx * lerpFactor;
-              agentGroup.position.z += dz * lerpFactor;
+              // 计算预测的新位置
+              const newX = currentPos.x + dx * lerpFactor;
+              const newZ = currentPos.z + dz * lerpFactor;
+
+              // 碰撞检测：检查新位置是否会与其他 Agent 碰撞
+              const collisionRadius = 3.5; // Q版 Agent 的碰撞半径
+              let hasCollision = false;
+
+              if (agentMeshesRef.current) {
+                for (const otherAgent of agentMeshesRef.current.children) {
+                  if (otherAgent instanceof THREE.Group && otherAgent.userData.agentId !== agentId) {
+                    const otherPos = otherAgent.position;
+                    const distToOther = Math.sqrt(
+                      Math.pow(newX - otherPos.x, 2) +
+                      Math.pow(newZ - otherPos.z, 2)
+                    );
+
+                    if (distToOther < collisionRadius) {
+                      hasCollision = true;
+                      // 如果是键盘控制的 Agent，停止移动
+                      if (isSelected) {
+                        agentTargetPositionsRef.current.set(agentId, {
+                          x: currentPos.x,
+                          y: currentPos.y,
+                          z: currentPos.z
+                        });
+                      }
+                      break;
+                    }
+                  }
+                }
+              }
+
+              // 只有在没有碰撞时才更新位置
+              if (!hasCollision) {
+                agentGroup.position.x = newX;
+                agentGroup.position.z = newZ;
+              } else if (isSelected) {
+                // 碰撞时显示调试信息
+                console.log(`[Collision] Agent ${agentId} collision detected, stopping movement`);
+              }
             }
 
             // 跳跃物理模拟
