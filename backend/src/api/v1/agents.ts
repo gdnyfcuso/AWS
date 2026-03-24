@@ -397,7 +397,7 @@ router.post(
         return res.status(403).json({
           success: false,
           error: 'You can only disconnect your own agent',
-          error_code: ErrorCode.PERMISSION_DENIED,
+          error_code: ErrorCode.ACTION_NOT_ALLOWED,
         });
       }
 
