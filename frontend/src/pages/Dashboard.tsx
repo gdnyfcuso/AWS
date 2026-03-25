@@ -17,6 +17,9 @@ import { useCityTerrainByAgent } from '../hooks/useCityTerrain';
 import { useRoadNetwork } from '../hooks/useRoadNetwork';
 import { useVehicles } from '../hooks/useVehicles';
 import { useMobileDetection, useResponsiveClasses } from '../hooks/useMobileDetection';
+import { RegionConfig } from '../types/map';
+import { useRegionLandmarks } from '../hooks/useMapRegions';
+import { useCityGeography } from '../hooks/useCityGeography';
 import { useEffect, useState } from 'react';
 import { Box, Globe, Smartphone } from 'lucide-react';
 import { getApiUrl } from '../utils/api';
@@ -40,6 +43,16 @@ export function Dashboard() {
   const [cameraViewMode, setCameraViewMode] = useState<CameraViewMode>('third-person');
   const [is3DFullscreen, setIs3DFullscreen] = useState(false);
 
+  // 地区选择状态
+  const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
+  const [selectedRegion, setSelectedRegion] = useState<RegionConfig | null>(null);
+
+  // 使用新的城市地理系统获取完整的3D数据
+  const { geography: cityGeography, loading: geographyLoading } = useCityGeography(selectedRegionId);
+
+  // 旧的地标数据（向后兼容）
+  const { landmarks: regionLandmarks, loading: landmarksLoading } = useRegionLandmarks(selectedRegionId);
+
   // 3D虚拟空间数据 - 使用城市级地形加载
   // 优先使用选中 Agent 的城市，如果没有选中则使用第一个 Agent
   const terrainAgentId = selectedAgentId || geographicAgents[0]?.agent_id || null;
@@ -52,7 +65,13 @@ export function Dashboard() {
   const { data: defaultTerrainData } = useTerrainData(!cityTerrainData.city && !cityTerrainLoading);
 
   // 使用城市地形数据，如果没有则使用默认地形数据
-  const terrainData = cityTerrainData.city ? {
+  // 当使用城市地理数据时，清空地形特征（城市没有山脉地形）
+  const terrainData = cityTerrainData.city && useCityData ? {
+    mountains: [],
+    hills: [],
+    rivers: [],
+    plains: [],
+  } : cityTerrainData.city ? {
     mountains: cityTerrainData.mountains,
     hills: cityTerrainData.hills,
     rivers: cityTerrainData.rivers,
@@ -78,6 +97,20 @@ export function Dashboard() {
   const handleVirtualAgentClick = (agentId: string) => {
     console.log('Virtual agent clicked:', agentId);
     setSelectedAgentId(agentId);
+  };
+
+  // 处理地图地区切换 - 联动3D虚拟空间
+  const handleRegionChange = (regionId: string, region: RegionConfig) => {
+    console.log('[Dashboard] Region changed:', regionId, region);
+    setSelectedRegionId(regionId);
+    setSelectedRegion(region);
+
+    // 根据选择的地区类型决定行为
+    if (region.type === 'city') {
+      console.log('[Dashboard] City selected, will load landmarks for:', regionId);
+      // 切换到 3D 视图以显示地标
+      setViewMode('virtual-3d');
+    }
   };
 
   // 获取 3D 虚拟空间所需的 Agent 数据（使用虚拟世界位置）
@@ -114,29 +147,105 @@ export function Dashboard() {
     status: a.status || 'online',
   }));
 
-  // 获取 3D 虚拟空间的建筑数据
-  const virtualBuildings = (locations || []).map((loc, index) => {
-    // 使用位置坐标，转换 2D 地图坐标到 3D 世界坐标
-    const coords = loc.coordinates || { x: 0, y: 0, z: 0 };
-    const angle = (index / ((locations?.length || 1) || 1)) * Math.PI * 2;
-    const radius = 80;
+  // 调试：监控城市地理数据的变化
+  useEffect(() => {
+    console.log('[Dashboard] City geography updated:', {
+      selectedRegionId,
+      hasGeography: !!cityGeography,
+      city: cityGeography?.city?.name,
+      roadsCount: cityGeography?.roads?.length || 0,
+      landmarksCount: cityGeography?.landmarks?.length || 0,
+      riversCount: cityGeography?.rivers?.length || 0,
+      loading: geographyLoading,
+    });
+  }, [cityGeography, selectedRegionId, geographyLoading]);
 
-    return {
-      id: loc.id,
-      name: loc.name,
-      type: loc.type,
-      x: coords.x || Math.cos(angle) * radius,
-      y: 0,
-      z: coords.y || Math.sin(angle) * radius,  // 地图 y 轴对应 3D z 轴
-      width: 30,
-      depth: 30,
-      height: 40 + Math.random() * 60,
-      color: loc.type === 'residential' ? '#4ade80' :
-             loc.type === 'office' ? '#60a5fa' :
-             loc.type === 'commercial' ? '#fbbf24' :
-             loc.type === 'park' ? '#34d399' : '#a78bfa',
-    };
+  // 获取 3D 虚拟空间的建筑数据
+  // 优先使用城市地理数据，否则使用旧的地区数据
+  const useCityData = !!cityGeography && cityGeography.landmarks && cityGeography.landmarks.length > 0;
+
+  // 调试日志
+  console.log('[Dashboard] useCityData check:', {
+    selectedRegionId,
+    hasCityGeography: !!cityGeography,
+    cityGeographyKeys: cityGeography ? Object.keys(cityGeography) : [],
+    hasLandmarks: !!cityGeography?.landmarks,
+    landmarksCount: cityGeography?.landmarks?.length || 0,
+    useCityData,
+    geographyLoading,
   });
+
+  const virtualBuildings = [
+    // 如果有城市地理数据，使用城市的地标（包含道路信息）
+    ...(useCityData ? cityGeography.landmarks.map((lm) => ({
+      id: lm.id,
+      name: lm.name,
+      nameEn: lm.nameEn,
+      type: lm.type,
+      x: lm.x,
+      y: lm.y,
+      z: lm.z,
+      width: lm.width,
+      depth: lm.depth,
+      height: lm.height,
+      color: lm.color,
+      description: lm.description,
+    })) : regionLandmarks.map((lm) => ({
+      id: lm.id,
+      name: lm.name,
+      type: lm.type || 'landmark',
+      x: lm.x,
+      y: lm.y || 0,
+      z: lm.z,
+      width: lm.width || 30,
+      depth: lm.depth || 30,
+      height: lm.height || 40,
+      color: lm.color || '#a78bfa',
+    }))),
+
+    // 仅在没有城市地理数据时添加虚拟世界的位置建筑
+    ...(!useCityData ? (locations || []).map((loc, index) => {
+      const coords = loc.coordinates || { x: 0, y: 0, z: 0 };
+      const angle = (index / ((locations?.length || 1) || 1)) * Math.PI * 2;
+      const radius = 80;
+
+      return {
+        id: loc.id,
+        name: loc.name,
+        type: loc.type,
+        x: coords.x || Math.cos(angle) * radius,
+        y: 0,
+        z: coords.y || Math.sin(angle) * radius,
+        width: 30,
+        depth: 30,
+        height: 40 + Math.random() * 60,
+        color: loc.type === 'residential' ? '#4ade80' :
+               loc.type === 'office' ? '#60a5fa' :
+               loc.type === 'commercial' ? '#fbbf24' :
+               loc.type === 'park' ? '#34d399' : '#a78bfa',
+      };
+    }) : []),
+  ];
+
+  // 城市道路数据 - 将地理数据中的道路转换为3D场景所需格式
+  const cityRoads = useCityData && cityGeography.roads ? cityGeography.roads.map((road: any) => ({
+    id: road.id,
+    name: road.name,
+    path: road.path,
+    width: road.width / 10,  // 转换为虚拟空间单位
+    lanes: road.lanes,
+    color: road.type === 'highway' ? '#ef4444' :
+            road.type === 'ring_road' ? '#3b82f6' :
+            road.type === 'main_road' ? '#10b981' : '#6b7280',
+  })) : [];
+
+  // 城市河流数据
+  const cityRivers = useCityData && cityGeography.rivers ? cityGeography.rivers.map((river: any) => ({
+    id: river.id,
+    name: river.name,
+    path: river.path,
+    width: river.width,
+  })) : [];
 
   // 加载状态
   if (isLoading) {
@@ -239,6 +348,8 @@ export function Dashboard() {
               <RealWorldMap
                 agents={geographicAgents}
                 onAgentClick={handleAgentClick}
+                onRegionChange={handleRegionChange}
+                selectedRegionId={selectedRegionId}
               />
             ) : (
               <div className="bg-white rounded-xl border border-gray-200 p-6 text-center" style={{ minHeight: '500px' }}>
@@ -249,26 +360,68 @@ export function Dashboard() {
 
           {viewMode === 'virtual-3d' && (
             <>
-              {/* 当前城市信息显示 - 仅在非全屏时显示 */}
-              {cityTerrainData.city && !is3DFullscreen && (
+              {/* 当前地区信息显示 - 仅在非全屏时显示 */}
+              {(selectedRegion || cityTerrainData.city) && !is3DFullscreen && (
                 <div className="absolute top-4 left-4 z-10 bg-black/60 text-white px-4 py-2 rounded-lg backdrop-blur-sm">
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm">
-                      <span className="font-medium">{cityTerrainData.city.name}</span>
-                      {cityTerrainData.city.province && <span className="text-gray-300">, {cityTerrainData.city.province}</span>}
-                    </span>
-                    {selectedAgentId && (
-                      <span className="text-xs text-gray-300">
-                        (Agent: {selectedAgentId})
-                      </span>
+                  <div className="flex flex-col gap-2">
+                    {selectedRegion && (
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm">
+                          <span className="font-medium">{selectedRegion.name}</span>
+                          <span className="text-gray-300 text-xs ml-2">({selectedRegion.type})</span>
+                        </span>
+                        {regionLandmarks.length > 0 && (
+                          <span className="text-xs text-gray-300">
+                            {regionLandmarks.length} 个地标
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {cityTerrainData.city && !selectedRegion && (
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm">
+                          <span className="font-medium">{cityTerrainData.city.name}</span>
+                          {cityTerrainData.city.province && <span className="text-gray-300">, {cityTerrainData.city.province}</span>}
+                        </span>
+                        {selectedAgentId && (
+                          <span className="text-xs text-gray-300">
+                            (Agent: {selectedAgentId})
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {(cityTerrainLoading || landmarksLoading) && (
+                      <div className="text-xs text-gray-400">加载中...</div>
                     )}
                   </div>
-                  {cityTerrainLoading && (
-                    <div className="mt-1 text-xs text-gray-400">加载地形数据...</div>
-                  )}
                 </div>
               )}
+              {/* 临时调试面板 */}
+              <div className="absolute top-20 right-4 z-10 bg-black/80 text-white p-4 rounded-lg text-xs max-w-md space-y-1 overflow-auto max-h-96">
+                <div className="font-bold text-yellow-400">🔍 调试信息</div>
+                <div>selectedRegionId: <span className="text-green-400">{selectedRegionId || 'null'}</span></div>
+                <div>useCityData: <span className="text-yellow-400 font-bold">{useCityData ? 'TRUE' : 'FALSE'}</span></div>
+                <div className="border-t border-gray-600 mt-2 pt-2">
+                  <div className="text-gray-400">传递给 VirtualSpace3D:</div>
+                  <div>roads.length: <span className="text-green-400">{(useCityData ? cityRoads : roadNetworkData.roads)?.length || 0}</span></div>
+                  <div>intersections.length: <span className="text-green-400">{(useCityData ? [] : roadNetworkData.intersections)?.length || 0}</span></div>
+                  <div>rivers.length: <span className="text-green-400">{cityRivers.length}</span></div>
+                  <div>enableTerrain: <span className="text-green-400">{(!useCityData).toString()}</span></div>
+                </div>
+                <div className="border-t border-gray-600 mt-2 pt-2">
+                  <div className="text-gray-400">cityRoads详情:</div>
+                  {cityRoads.map((r, i) => (
+                    <div key={i} className="text-blue-300">
+                      {r.name}: {r.path?.length || 0} points, type={r.type}
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t border-gray-600 mt-2 pt-2">
+                  <div className="text-gray-400">Scene Key: <span className="text-yellow-400">{useCityData ? `city-${selectedRegionId}` : 'default'}</span></div>
+                </div>
+              </div>
               <VirtualSpace3D
+                key={useCityData ? `city-${selectedRegionId}` : 'default'}
                 agents={displayAgents}
                 buildings={virtualBuildings}
                 onAgentClick={handleVirtualAgentClick}
@@ -281,10 +434,17 @@ export function Dashboard() {
                   ...terrainData.rivers,
                   ...terrainData.plains,
                 ]}
-                roads={roadNetworkData.roads}
-                intersections={roadNetworkData.intersections}
+                // 当有城市地理数据时，使用城市的道路，清空路口
+                roads={useCityData ? cityRoads : roadNetworkData.roads}
+                intersections={useCityData ? [] : roadNetworkData.intersections}
                 vehicles={vehicles}
-                enableTerrain={true}
+                // 新增：城市特定的河流数据
+                rivers={cityRivers}
+                // 新增：城市边界，用于限制相机视角
+                cityBounds={useCityData ? cityGeography?.bounds : null}
+                // 新增：城市中心，用于初始相机位置
+                cityCenter={useCityData ? cityGeography?.city?.center : null}
+                enableTerrain={!useCityData}
                 enableRoads={true}
                 enableVehicles={true}
                 externalIsFullscreen={is3DFullscreen}

@@ -17,3 +17,7 @@ export { VehicleSystem } from './VehicleSystem';
 // 城市级地形系统
 export { CityTerrainSystem, cityTerrainSystem } from './CityTerrainSystem';
 export type { TerrainData, ElevationPoint } from './CityTerrainSystem';
+
+// 国家地图系统
+export { CountryMapSystem, countryMapSystem, CHINA_REGIONS } from './CountryMapSystem';
+export type { RegionConfig, RegionType } from './CountryMapSystem';

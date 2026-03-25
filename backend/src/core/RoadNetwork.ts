@@ -21,15 +21,15 @@ const logger = createLogger('RoadNetwork');
  * 北京主要道路定义
  */
 const BEIJING_ROADS: BeijingRoadDefinition[] = [
-  // 环路
+  // 环路 - 使用包围盒坐标定义 (minLat,minLng 到 maxLat,maxLng)
   {
     id: 'ring_road_2',
     name: '二环路',
     nameEn: '2nd Ring Road',
     type: 'ring_road',
     realCoordinates: {
-      start: { lat: 39.9042, lng: 116.3274 },
-      end: { lat: 39.9042, lng: 116.4874 },
+      start: { lat: 39.85, lng: 116.35 }, // 西南角
+      end: { lat: 39.96, lng: 116.47 },   // 东北角
     },
     lanes: 6,
     width: 30,
@@ -41,8 +41,8 @@ const BEIJING_ROADS: BeijingRoadDefinition[] = [
     nameEn: '3rd Ring Road',
     type: 'ring_road',
     realCoordinates: {
-      start: { lat: 39.8742, lng: 116.2874 },
-      end: { lat: 39.9342, lng: 116.5274 },
+      start: { lat: 39.82, lng: 116.30 }, // 西南角
+      end: { lat: 39.98, lng: 116.52 },   // 东北角
     },
     lanes: 6,
     width: 32,
@@ -54,8 +54,8 @@ const BEIJING_ROADS: BeijingRoadDefinition[] = [
     nameEn: '4th Ring Road',
     type: 'ring_road',
     realCoordinates: {
-      start: { lat: 39.8342, lng: 116.2374 },
-      end: { lat: 39.9742, lng: 116.5774 },
+      start: { lat: 39.78, lng: 116.25 }, // 西南角
+      end: { lat: 40.02, lng: 116.57 },   // 东北角
     },
     lanes: 8,
     width: 35,
@@ -67,8 +67,8 @@ const BEIJING_ROADS: BeijingRoadDefinition[] = [
     nameEn: '5th Ring Road',
     type: 'highway',
     realCoordinates: {
-      start: { lat: 39.7942, lng: 116.1874 },
-      end: { lat: 40.0142, lng: 116.6274 },
+      start: { lat: 39.75, lng: 116.18 }, // 西南角
+      end: { lat: 40.08, lng: 116.64 },   // 东北角
     },
     lanes: 6,
     width: 40,
@@ -256,7 +256,7 @@ export class RoadNetwork {
   }
 
   /**
-   * 生成环路
+   * 生成环路 - 使用真实地理坐标
    */
   private async generateRingRoads(): Promise<void> {
     const ringRoads = ['ring_road_2', 'ring_road_3', 'ring_road_4', 'ring_road_5'];
@@ -265,7 +265,8 @@ export class RoadNetwork {
       const roadDef = BEIJING_ROADS.find(r => r.id === roadId);
       if (!roadDef) continue;
 
-      const path = this.generateCircularPath(roadDef);
+      // 使用真实坐标生成路径
+      const path = this.generateRingRoadPathFromRealCoords(roadDef);
       await this.createRoad({
         road_id: roadDef.id,
         name: roadDef.name,
@@ -282,108 +283,120 @@ export class RoadNetwork {
   }
 
   /**
-   * 生成环形道路路径
+   * 生成环形道路路径 - 基于真实地理坐标
+   * start/end 定义为环路包围盒的对角线坐标
    */
-  private generateCircularPath(roadDef: BeijingRoadDefinition): Vector3D[] {
+  private generateRingRoadPathFromRealCoords(roadDef: BeijingRoadDefinition): Vector3D[] {
     const path: Vector3D[] = [];
     const segments = 64; // 圆的分段数
 
-    // 计算环路的半径（基于道路ID）
-    const radii: Record<string, number> = {
-      'ring_road_2': 80,
-      'ring_road_3': 120,
-      'ring_road_4': 160,
-      'ring_road_5': 200,
-    };
-    const radius = radii[roadDef.id] || 100;
+    // 从真实坐标获取环路的边界包围盒
+    const { start, end } = roadDef.realCoordinates;
 
+    // 计算环路的中心点（start 和 end 的平均值）
+    const centerLat = (start.lat + end.lat) / 2;
+    const centerLng = (start.lng + end.lng) / 2;
+
+    // 转换为虚拟空间坐标
+    const centerVirtual = mapCoordinateSystem.realToVirtual(centerLat, centerLng);
+
+    // 计算半轴长度 - 使用 start 和 end 作为包围盒的对角线
+    // 需要找到环路在各个方向的边界
+    const minLat = Math.min(start.lat, end.lat);
+    const maxLat = Math.max(start.lat, end.lat);
+    const minLng = Math.min(start.lng, end.lng);
+    const maxLng = Math.max(start.lng, end.lng);
+
+    // 计算四个角点的虚拟坐标来确定椭圆的边界
+    const topLeft = mapCoordinateSystem.realToVirtual(maxLat, minLng);
+    const topRight = mapCoordinateSystem.realToVirtual(maxLat, maxLng);
+    const bottomLeft = mapCoordinateSystem.realToVirtual(minLat, minLng);
+    const bottomRight = mapCoordinateSystem.realToVirtual(minLat, maxLng);
+
+    // 计算椭圆的半轴长度
+    const radiusX = Math.max(
+      Math.abs(topRight.x - topLeft.x) / 2,
+      Math.abs(bottomRight.x - bottomLeft.x) / 2
+    );
+    const radiusZ = Math.max(
+      Math.abs(topLeft.z - bottomLeft.z) / 2,
+      Math.abs(topRight.z - bottomRight.z) / 2
+    );
+
+    // 生成椭圆路径
     for (let i = 0; i <= segments; i++) {
       const angle = (i / segments) * Math.PI * 2;
       path.push({
-        x: Math.cos(angle) * radius,
+        x: centerVirtual.x + Math.cos(angle) * radiusX,
         y: 0,
-        z: Math.sin(angle) * radius,
+        z: centerVirtual.z + Math.sin(angle) * radiusZ,
       });
     }
 
+    logger.info(`Generated ring road ${roadDef.id} with ${path.length} points from real coords (radiusX: ${radiusX.toFixed(1)}, radiusZ: ${radiusZ.toFixed(1)})`);
     return path;
   }
 
   /**
-   * 生成主干道
+   * 生成线性道路路径 - 基于真实地理坐标
+   */
+  private generateLinearPathFromRealCoords(roadDef: BeijingRoadDefinition): Vector3D[] {
+    const path: Vector3D[] = [];
+    const steps = 30; // 路径点数
+
+    const { start, end } = roadDef.realCoordinates;
+
+    // 如果有中间路径点，使用它们生成更精确的路径
+    const waypoints = roadDef.realCoordinates.waypoints || [start, end];
+    const allPoints = [start, ...waypoints, end];
+
+    // 生成路径
+    for (let i = 0; i < allPoints.length - 1; i++) {
+      const segmentStart = allPoints[i];
+      const segmentEnd = allPoints[i + 1];
+
+      for (let j = 0; j < steps; j++) {
+        const t = j / steps;
+        const lat = segmentStart.lat + (segmentEnd.lat - segmentStart.lat) * t;
+        const lng = segmentStart.lng + (segmentEnd.lng - segmentStart.lng) * t;
+        const virtual = mapCoordinateSystem.realToVirtual(lat, lng);
+        path.push(virtual);
+      }
+    }
+
+    // 添加最后一个点
+    const lastVirtual = mapCoordinateSystem.realToVirtual(end.lat, end.lng);
+    path.push(lastVirtual);
+
+    logger.info(`Generated linear road ${roadDef.id} with ${path.length} points from real coords`);
+    return path;
+  }
+
+  /**
+   * 生成主干道 - 使用真实地理坐标
    */
   private async generateMainRoads(): Promise<void> {
-    // 长安街（东西向）
-    const changanPath: Vector3D[] = [];
-    for (let x = -300; x <= 300; x += 20) {
-      changanPath.push({ x, y: 0, z: 0 });
-    }
-    await this.createRoad({
-      road_id: 'changan_ave',
-      name: '长安街',
-      nameEn: "Chang'an Avenue",
-      type: 'main_road',
-      width: 40,
-      lanes: 8,
-      speedLimit: 60,
-      path: changanPath,
-      isOneWay: false,
-      hasLaneMarkings: true,
-    });
+    const mainRoads = ['changan_ave', 'central_axis', 'jinrong_street', 'wangfujing_street'];
 
-    // 中轴线（南北向）
-    const centralPath: Vector3D[] = [];
-    for (let z = -200; z <= 200; z += 20) {
-      centralPath.push({ x: 0, y: 0, z });
-    }
-    await this.createRoad({
-      road_id: 'central_axis',
-      name: '中轴线',
-      nameEn: 'Central Axis',
-      type: 'main_road',
-      width: 35,
-      lanes: 6,
-      speedLimit: 60,
-      path: centralPath,
-      isOneWay: false,
-      hasLaneMarkings: true,
-    });
+    for (const roadId of mainRoads) {
+      const roadDef = BEIJING_ROADS.find(r => r.id === roadId);
+      if (!roadDef) continue;
 
-    // 金融街
-    const jinrongPath: Vector3D[] = [];
-    for (let x = -100; x <= 0; x += 20) {
-      jinrongPath.push({ x, y: 0, z: 20 });
+      // 使用真实坐标生成路径
+      const path = this.generateLinearPathFromRealCoords(roadDef);
+      await this.createRoad({
+        road_id: roadDef.id,
+        name: roadDef.name,
+        nameEn: roadDef.nameEn,
+        type: roadDef.type,
+        width: roadDef.width,
+        lanes: roadDef.lanes,
+        speedLimit: roadDef.speedLimit,
+        path,
+        isOneWay: false,
+        hasLaneMarkings: true,
+      });
     }
-    await this.createRoad({
-      road_id: 'jinrong_street',
-      name: '金融街',
-      nameEn: 'Financial Street',
-      type: 'main_road',
-      width: 25,
-      lanes: 4,
-      speedLimit: 50,
-      path: jinrongPath,
-      isOneWay: false,
-      hasLaneMarkings: true,
-    });
-
-    // 王府井大街
-    const wangfujingPath: Vector3D[] = [];
-    for (let z = 0; z <= 60; z += 15) {
-      wangfujingPath.push({ x: 50, y: 0, z });
-    }
-    await this.createRoad({
-      road_id: 'wangfujing_street',
-      name: '王府井大街',
-      nameEn: 'Wangfujing Street',
-      type: 'secondary_road',
-      width: 20,
-      lanes: 4,
-      speedLimit: 40,
-      path: wangfujingPath,
-      isOneWay: false,
-      hasLaneMarkings: true,
-    });
   }
 
   /**

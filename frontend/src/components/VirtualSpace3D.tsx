@@ -36,6 +36,18 @@ interface Building3D {
   color: string;
 }
 
+interface River3D {
+  id: string;
+  name: string;
+  path: { x: number; y: number; z: number }[];
+  width: number;
+}
+
+interface CityBounds {
+  min: { x: number; y: number; z: number };
+  max: { x: number; y: number; z: number };
+}
+
 interface VirtualSpace3DProps {
   agents: Agent3D[];
   buildings: Building3D[];
@@ -48,6 +60,10 @@ interface VirtualSpace3DProps {
   roads?: RoadData[];
   intersections?: IntersectionData[];
   vehicles?: VehicleData[];
+  // 新增：城市特定的数据
+  rivers?: River3D[];
+  cityBounds?: CityBounds;
+  cityCenter?: { lat: number; lng: number };
   onVehicleClick?: (vehicle: VehicleData) => void;
   enableTerrain?: boolean;
   enableRoads?: boolean;
@@ -282,6 +298,9 @@ export function VirtualSpace3D({
   roads = [],
   intersections = [],
   vehicles = [],
+  rivers = [],
+  cityBounds,
+  cityCenter,
   onVehicleClick,
   enableTerrain = true,
   enableRoads = true,
@@ -291,6 +310,9 @@ export function VirtualSpace3D({
   isMobile = false,
   isTouchDevice: _isTouchDevice = false,
 }: VirtualSpace3DProps) {
+  // 生成唯一实例ID用于调试
+  const instanceId = useRef<string>(Math.random().toString(36).substring(7));
+
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -326,8 +348,32 @@ export function VirtualSpace3D({
   // 使用外部传入的currentSelectedAgentId，如果没有则使用内部状态
   const currentSelectedAgent = currentSelectedAgentId || internalSelectedAgent;
 
+  // 组件挂载日志
+  console.log(`[VirtualSpace3D#${instanceId.current}] Component mount/props:`, {
+    buildingsCount: buildings.length,
+    roadsCount: roads.length,
+    intersectionsCount: intersections.length,
+    riversCount: rivers.length,
+    terrainFeaturesCount: terrainFeatures.length,
+    enableTerrain,
+    cityBounds: !!cityBounds,
+  });
+
+  // 组件挂载时重置版本引用，确保首次渲染会执行
+  useEffect(() => {
+    console.log(`[VirtualSpace3D#${instanceId.current}] Resetting version refs on mount`);
+    renderedRoadsRef.current = '';
+    renderedBuildingsRef.current = '';
+  }, []);
+
+  // 使用 ref 存储当前选中的 Agent，避免动画循环闭包问题
+
   // 使用 ref 存储当前选中的 Agent，避免动画循环闭包问题
   const currentSelectedAgentRef = useRef<string | null>(currentSelectedAgent);
+
+  // 追踪已渲染的道路数据版本，防止重复渲染
+  const renderedRoadsRef = useRef<string>('');
+  const renderedBuildingsRef = useRef<string>('');
 
   // 当 currentSelectedAgent 变化时，更新 ref
   useEffect(() => {
@@ -550,10 +596,21 @@ export function VirtualSpace3D({
       scene.add(roadsGroup);
       (sceneRef.current as any).roadsGroup = roadsGroup;
 
+      const riversGroup = new THREE.Group();
+      riversGroup.name = 'RiversGroup';
+      scene.add(riversGroup);
+      (sceneRef.current as any).riversGroup = riversGroup;
+
       const vehiclesGroup = new THREE.Group();
       vehiclesGroup.name = 'VehiclesGroup';
       scene.add(vehiclesGroup);
       (sceneRef.current as any).vehiclesGroup = vehiclesGroup;
+
+      // 创建建筑物组
+      const buildingsGroup = new THREE.Group();
+      buildingsGroup.name = 'BuildingsGroup';
+      scene.add(buildingsGroup);
+      (sceneRef.current as any).buildingsGroup = buildingsGroup;
 
       // 添加基础地面（绿色草地）作为视觉参考
       const groundGeometry = new THREE.PlaneGeometry(2000, 2000);
@@ -593,15 +650,111 @@ export function VirtualSpace3D({
       setWebGLError(true);
     }
 
-    // 清理函数 - 只在组件真正卸载时执行
+    // 清理函数 - 组件卸载时执行完整清理
     return () => {
+      console.log(`[VirtualSpace3D#${instanceId.current}] Cleanup - disposing resources`);
+
+      // 先停止动画循环
+      isAnimatingRef.current = false;
+
+      // 先清理各个组的内容（确保几何体和材质被释放）
+      if (sceneRef.current) {
+        const groups = ['roadsGroup', 'buildingsGroup', 'riversGroup', 'vehiclesGroup', 'terrainGroup', 'agentsGroup'];
+        groups.forEach(groupName => {
+          const group = (sceneRef.current as any)[groupName];
+          if (group) {
+            console.log(`[VirtualSpace3D] Cleaning up ${groupName}: ${group.children.length} children`);
+            // 递归清理组内所有对象
+            group.traverse((object: any) => {
+              if (object instanceof THREE.Mesh) {
+                if (object.geometry) {
+                  object.geometry.dispose();
+                }
+                if (object.material) {
+                  if (Array.isArray(object.material)) {
+                    object.material.forEach((material: any) => material.dispose());
+                  } else {
+                    object.material.dispose();
+                  }
+                }
+              }
+            });
+            // 清空组的子元素
+            while (group.children.length > 0) {
+              group.remove(group.children[0]);
+            }
+            // 显式从场景中移除组
+            sceneRef.current.remove(group);
+            // 清空引用
+            (sceneRef.current as any)[groupName] = null;
+          }
+        });
+
+        // 额外检查：移除场景中的所有剩余对象
+        const objectsToRemove: any[] = [];
+        sceneRef.current.traverse((object: any) => {
+          if (object.parent === sceneRef.current) {
+            objectsToRemove.push(object);
+          }
+        });
+        objectsToRemove.forEach((object: any) => {
+          if (object instanceof THREE.Mesh) {
+            if (object.geometry) object.geometry.dispose();
+            if (object.material) {
+              if (Array.isArray(object.material)) {
+                object.material.forEach((mat: any) => mat.dispose());
+              } else {
+                object.material.dispose();
+              }
+            }
+          }
+          sceneRef.current.remove(object);
+        });
+
+        // 最后清空场景
+        sceneRef.current.clear();
+      }
+
+      // 清理渲染器
       if (rendererRef.current) {
         rendererRef.current.dispose();
+        rendererRef.current.forceContextLoss();
         if (containerRef.current && rendererRef.current.domElement && containerRef.current.contains(rendererRef.current.domElement)) {
           containerRef.current.removeChild(rendererRef.current.domElement);
         }
         rendererRef.current = null;
       }
+
+      // 清理控制器
+      if (controlsRef.current) {
+        controlsRef.current.dispose();
+        controlsRef.current = null;
+      }
+
+      // 清理 Agent 相关的 Map
+      agentTargetPositionsRef.current.clear();
+      agentIsMovingRef.current.clear();
+      agentPhysicsRef.current.clear();
+      agentRotationsRef.current.clear();
+      communicationChannelsRef.current.forEach((line) => {
+        sceneRef.current?.remove(line);
+        line.geometry.dispose();
+        (line.material as any).dispose();
+      });
+      communicationChannelsRef.current.clear();
+
+      // 重置状态
+      setSceneReady(false);
+      setInitAttempted(false);
+
+      // 重置渲染版本追踪
+      renderedRoadsRef.current = '';
+      renderedBuildingsRef.current = '';
+
+      // 清空场景引用
+      sceneRef.current = null;
+
+      console.log('[VirtualSpace3D] Cleanup completed');
     };
   }, [enableTerrain]); // 添加 enableTerrain 依赖
 
@@ -1078,21 +1231,76 @@ export function VirtualSpace3D({
   useEffect(() => {
     if (!sceneReady || !sceneRef.current) return;
 
-    // 移除旧建筑（保留 Agent、地面和辅助线）
-    sceneRef.current.children.forEach(child => {
-      if (child instanceof THREE.Group && child !== agentMeshesRef.current) {
-        if (child.userData.isBuilding) {
-          sceneRef.current!.remove(child);
-        }
-      }
+    // 创建建筑数据的版本标识
+    const buildingsVersion = JSON.stringify(buildings.map(b => ({ id: b.id, x: b.x, z: b.z })));
+
+    // 如果建筑数据没有变化，跳过渲染
+    if (renderedBuildingsRef.current === buildingsVersion) {
+      console.log(`[VirtualSpace3D#${instanceId.current}] Buildings data unchanged, skipping render`);
+      return;
+    }
+
+    let buildingsGroup = (sceneRef.current as any).buildingsGroup as THREE.Group;
+
+    // 如果 buildingsGroup 不存在，创建它
+    if (!buildingsGroup) {
+      buildingsGroup = new THREE.Group();
+      buildingsGroup.name = 'BuildingsGroup';
+      sceneRef.current.add(buildingsGroup);
+      (sceneRef.current as any).buildingsGroup = buildingsGroup;
+      console.log(`[VirtualSpace3D#${instanceId.current}] Created new buildingsGroup`);
+    }
+
+    console.log(`[VirtualSpace3D#${instanceId.current}] Rendering buildings:`, {
+      buildingsCount: buildings.length,
+      buildingsChildrenBefore: buildingsGroup.children.length,
     });
+
+    // 强制清空现有建筑物（确保从旧的渲染中清理）
+    const toRemove: any[] = [];
+    buildingsGroup.children.forEach(child => toRemove.push(child));
+    toRemove.forEach(child => {
+      if (child instanceof THREE.Group) {
+        child.traverse((obj: any) => {
+          if (obj instanceof THREE.Mesh) {
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material instanceof THREE.Material) {
+              obj.material.dispose();
+            } else if (Array.isArray(obj.material)) {
+              obj.material.forEach((mat: any) => mat.dispose());
+            }
+          }
+        });
+      }
+      buildingsGroup.remove(child);
+    });
+
+    console.log('[VirtualSpace3D] Cleared', toRemove.length, 'old building groups');
+
+    // 清空现有建筑物
+    while (buildingsGroup.children.length > 0) {
+      const child = buildingsGroup.children[0];
+      if (child instanceof THREE.Group) {
+        // 递归清理Group中的所有mesh
+        child.traverse((obj) => {
+          if (obj instanceof THREE.Mesh) {
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material instanceof THREE.Material) {
+              obj.material.dispose();
+            } else if (Array.isArray(obj.material)) {
+              obj.material.forEach(mat => mat.dispose());
+            }
+          }
+        });
+      }
+      buildingsGroup.remove(child);
+    }
 
     // 添加新建筑
     buildings.forEach(building => {
       const buildingGroup = new THREE.Group();
       // 建筑物位置：y + height/2 使建筑物底部在 y 上
       buildingGroup.position.set(building.x, building.y + building.height / 2, building.z);
-      buildingGroup.userData = { isBuilding: true };
 
       // 建筑主体
       const geometry = new THREE.BoxGeometry(building.width, building.height, building.depth);
@@ -1120,10 +1328,17 @@ export function VirtualSpace3D({
         }
       }
 
-      sceneRef.current!.add(buildingGroup);
+      buildingsGroup.add(buildingGroup);
     });
 
-  }, [buildings, sceneReady]);
+    console.log(`[VirtualSpace3D#${instanceId.current}] Buildings rendered:`, {
+      buildingsChildrenAfter: buildingsGroup.children.length,
+    });
+
+    // 记录已渲染的建筑版本
+    renderedBuildingsRef.current = buildingsVersion;
+
+  }, [buildings, sceneReady, instanceId.current]);
 
   // 渲染地形
   useEffect(() => {
@@ -1252,27 +1467,78 @@ export function VirtualSpace3D({
   useEffect(() => {
     if (!sceneReady || !sceneRef.current || !enableRoads) return;
 
-    const roadsGroup = (sceneRef.current as any).roadsGroup as THREE.Group;
-    if (!roadsGroup) return;
+    // 创建道路数据的版本标识，用于检测数据是否变化
+    const roadsVersion = JSON.stringify(roads.map(r => ({ id: r.id, path: r.path?.length || 0 })));
 
-    // 清空现有道路
-    while (roadsGroup.children.length > 0) {
-      const child = roadsGroup.children[0];
+    // 如果道路数据没有变化，跳过渲染
+    if (renderedRoadsRef.current === roadsVersion) {
+      console.log(`[VirtualSpace3D#${instanceId.current}] Roads data unchanged, skipping render`);
+      return;
+    }
+
+    // 获取或创建 roadsGroup
+    let roadsGroup = (sceneRef.current as any).roadsGroup as THREE.Group;
+    if (!roadsGroup) {
+      roadsGroup = new THREE.Group();
+      roadsGroup.name = 'RoadsGroup';
+      sceneRef.current.add(roadsGroup);
+      (sceneRef.current as any).roadsGroup = roadsGroup;
+    }
+
+    console.log(`[VirtualSpace3D#${instanceId.current}] Roads useEffect start`, {
+      hasRoadsGroup: !!roadsGroup,
+      roadsGroupName: roadsGroup?.name,
+      existingChildren: roadsGroup.children.length,
+      sceneChildren: sceneRef.current?.children.length,
+      roadsVersion: roadsVersion.substring(0, 50) + '...',
+    });
+
+    console.log('[VirtualSpace3D] Rendering roads:', {
+      roadsCount: roads.length,
+      intersectionsCount: intersections.length,
+      roadsChildrenBefore: roadsGroup.children.length,
+    });
+
+    // 强制清空现有道路（确保从旧的渲染中清理）
+    const toRemove: any[] = [];
+    roadsGroup.children.forEach(child => toRemove.push(child));
+
+    console.log('[VirtualSpace3D] Clearing roads:', {
+      before: toRemove.length,
+      groupName: roadsGroup.name,
+      groupUuid: (roadsGroup as any).uuid,
+    });
+
+    toRemove.forEach(child => {
       if (child instanceof THREE.Mesh) {
         child.geometry.dispose();
         if (child.material instanceof THREE.Material) {
           child.material.dispose();
+        } else if (Array.isArray(child.material)) {
+          child.material.forEach((mat: any) => mat.dispose());
         }
       }
       roadsGroup.remove(child);
+    });
+
+    // 二次确认：再次清空任何剩余的子元素
+    while (roadsGroup.children.length > 0) {
+      const child = roadsGroup.children[0];
+      roadsGroup.remove(child);
     }
 
+    console.log('[VirtualSpace3D] Cleared', toRemove.length, 'old road meshes, children after clear:', roadsGroup.children.length);
+
     // 渲染道路
+    let segmentsRendered = 0;
+    let meshesAdded = 0;
     roads.forEach(road => {
       if (!road.path || road.path.length < 2) return;
 
       const roadColor = getRoadColor(road.type);
       const path = road.path.map(p => new THREE.Vector3(p.x, p.y, p.z));
+
+      console.log('[VirtualSpace3D] Rendering road:', road.name, 'with', path.length, 'points');
 
       for (let i = 0; i < path.length - 1; i++) {
         const start = path[i];
@@ -1300,6 +1566,8 @@ export function VirtualSpace3D({
         );
         roadMesh.receiveShadow = true;
         roadsGroup.add(roadMesh);
+        meshesAdded++;
+        segmentsRendered++;
 
         // 车道标线
         if (road.lanes > 1 && road.has_lane_markings !== false) {
@@ -1312,6 +1580,7 @@ export function VirtualSpace3D({
     });
 
     // 渲染路口
+    let intersectionMeshes = 0;
     intersections.forEach(intersection => {
       const junctionSize = 20;
       const junctionGeometry = new THREE.CircleGeometry(junctionSize, 32);
@@ -1345,10 +1614,23 @@ export function VirtualSpace3D({
         const light = new THREE.Mesh(lightGeometry, lightMaterial);
         light.position.set(intersection.position.x + 8, 4.1, intersection.position.z + 7.7);
         roadsGroup.add(light);
+        intersectionMeshes += 4; // junction + pole + box + light
       }
     });
 
-  }, [roads, intersections, sceneReady, enableRoads]);
+    console.log(`[VirtualSpace3D#${instanceId.current}] Roads rendered:`, {
+      roadSegments: segmentsRendered,
+      meshesAdded: meshesAdded,
+      intersectionMeshes,
+      roadsChildrenBeforeClear: toRemove.length,
+      roadsChildrenAfter: roadsGroup.children.length,
+      expected: meshesAdded + intersectionMeshes,
+    });
+
+    // 记录已渲染的道路版本
+    renderedRoadsRef.current = roadsVersion;
+
+  }, [roads, intersections, sceneReady, enableRoads, instanceId.current]);
 
   // 渲染车辆
   useEffect(() => {
@@ -1382,6 +1664,94 @@ export function VirtualSpace3D({
     });
 
   }, [vehicles, sceneReady, enableVehicles, onVehicleClick]);
+
+  // 渲染河流
+  useEffect(() => {
+    if (!sceneReady || !sceneRef.current) return;
+    if (!rivers || rivers.length === 0) return;
+
+    const riversGroup = (sceneRef.current as any).riversGroup as THREE.Group;
+    if (!riversGroup) return;
+
+    // 清空现有河流
+    while (riversGroup.children.length > 0) {
+      const child = riversGroup.children[0];
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        if (child.material instanceof THREE.Material) {
+          child.material.dispose();
+        }
+      }
+      riversGroup.remove(child);
+    }
+
+    // 渲染河流
+    rivers.forEach(river => {
+      if (!river.path || river.path.length < 2) return;
+
+      const path = river.path.map(p => new THREE.Vector3(p.x, p.y, p.z));
+
+      for (let i = 0; i < path.length - 1; i++) {
+        const start = path[i];
+        const end = path[i + 1];
+        const length = start.distanceTo(end);
+        const direction = new THREE.Vector3().subVectors(end, start).normalize();
+        const angle = Math.atan2(direction.x, direction.z);
+
+        // 创建河流段
+        const riverGeometry = new THREE.PlaneGeometry(river.width, length);
+        const riverMaterial = new THREE.MeshStandardMaterial({
+          color: 0x3b82f6,
+          roughness: 0.1,
+          metalness: 0.3,
+          transparent: true,
+          opacity: 0.8,
+        });
+
+        const riverMesh = new THREE.Mesh(riverGeometry, riverMaterial);
+        riverMesh.rotation.x = -Math.PI / 2;
+        riverMesh.rotation.z = angle;
+        riverMesh.position.set(
+          (start.x + end.x) / 2,
+          -0.1,  // 略低于地面
+          (start.z + end.z) / 2
+        );
+        riverMesh.receiveShadow = true;
+        riversGroup.add(riverMesh);
+
+        // 添加河岸
+        const bankHeight = 0.5;
+        const bankWidth = 2;
+        const bankGeometry = new THREE.BoxGeometry(bankWidth, bankHeight, length);
+        const bankMaterial = new THREE.MeshStandardMaterial({
+          color: 0x8b7355,
+          roughness: 0.9,
+        });
+
+        // 左岸
+        const leftBank = new THREE.Mesh(bankGeometry, bankMaterial);
+        leftBank.rotation.x = -Math.PI / 2;
+        leftBank.rotation.z = angle;
+        leftBank.position.set(
+          (start.x + end.x) / 2 - (river.width / 2 + bankWidth / 2) * Math.cos(angle),
+          bankHeight / 2 - 0.1,
+          (start.z + end.z) / 2 - (river.width / 2 + bankWidth / 2) * Math.sin(angle)
+        );
+        riversGroup.add(leftBank);
+
+        // 右岸
+        const rightBank = new THREE.Mesh(bankGeometry.clone(), bankMaterial.clone());
+        rightBank.position.set(
+          (start.x + end.x) / 2 + (river.width / 2 + bankWidth / 2) * Math.cos(angle),
+          bankHeight / 2 - 0.1,
+          (start.z + end.z) / 2 + (river.width / 2 + bankWidth / 2) * Math.sin(angle)
+        );
+        riversGroup.add(rightBank);
+      }
+    });
+
+    console.log(`[VirtualSpace3D] Rendered ${rivers.length} rivers`);
+  }, [rivers, sceneReady]);
 
   // 聚焦到指定的 Agent（需要在 useEffect 之前定义）
   const focusOnAgent = (agentId: string) => {

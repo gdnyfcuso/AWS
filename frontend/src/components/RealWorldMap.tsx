@@ -1,9 +1,12 @@
 // 真实世界地图组件 - 使用 Leaflet
+// 增强版：支持地区层级切换，联动3D虚拟空间
 
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { MapPin, Navigation, ZoomIn, ZoomOut } from 'lucide-react';
+import { MapPin, Navigation, ZoomIn, ZoomOut, Layers, Users } from 'lucide-react';
+import { QuickCitySelector } from './RegionSelector';
+import { fetchMapView, RegionConfig } from '../hooks/useMapRegions';
 
 interface AgentMarker {
   agent_id: string;
@@ -19,6 +22,8 @@ interface AgentMarker {
 interface RealWorldMapProps {
   agents: AgentMarker[];
   onAgentClick?: (agentId: string) => void;
+  onRegionChange?: (regionId: string, region: RegionConfig) => void;
+  selectedRegionId?: string | null;
 }
 
 const moodColors: Record<string, string> = {
@@ -39,12 +44,17 @@ const moodLabels: Record<string, string> = {
   relaxed: '放松',
 };
 
-export function RealWorldMap({ agents, onAgentClick }: RealWorldMapProps) {
+export function RealWorldMap({ agents, onAgentClick, onRegionChange, selectedRegionId }: RealWorldMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
+  const [showRegionSelector, setShowRegionSelector] = useState(true);
+  const [currentRegion, setCurrentRegion] = useState<RegionConfig | null>(null);
+  const [viewMode, setViewMode] = useState<'agents' | 'region'>('agents'); // agents=跟随agent, region=锁定在选中地区
+
+  console.log('[RealWorldMap] Render:', { showRegionSelector, selectedRegionId, currentRegion, viewMode });
 
   // 初始化地图
   useEffect(() => {
@@ -125,6 +135,40 @@ export function RealWorldMap({ agents, onAgentClick }: RealWorldMapProps) {
     };
   }, []);
 
+  // 处理地区切换 - 更新地图视图并锁定视角
+  useEffect(() => {
+    const updateMapView = async () => {
+      if (!selectedRegionId || !mapRef.current || !mapReady) return;
+
+      try {
+        const viewConfig = await fetchMapView(selectedRegionId);
+        if (viewConfig) {
+          const { center, zoom } = viewConfig;
+          console.log('[RealWorldMap] Flying to region and locking view:', selectedRegionId, center, zoom);
+          mapRef.current.flyTo([center.lat, center.lng], zoom, {
+            duration: 1.5,
+          });
+          // 锁定视角到选中的地区，关闭自动跟随 Agent
+          setViewMode('region');
+        }
+      } catch (error) {
+        console.error('Failed to update map view:', error);
+      }
+    };
+
+    updateMapView();
+  }, [selectedRegionId, mapReady]);
+
+  // 处理地区选择回调
+  const handleRegionSelect = (regionId: string, region: RegionConfig) => {
+    console.log('[RealWorldMap] Region selected:', regionId, region);
+    setCurrentRegion(region);
+    if (onRegionChange) {
+      console.log('[RealWorldMap] Calling onRegionChange callback');
+      onRegionChange(regionId, region);
+    }
+  };
+
   // 添加 Agent 标记
   useEffect(() => {
     if (!mapRef.current || !mapReady) return;
@@ -186,20 +230,23 @@ export function RealWorldMap({ agents, onAgentClick }: RealWorldMapProps) {
         // 点击事件
         marker.on('click', () => {
           setSelectedAgent(agent.agent_id);
+          // 点击 Agent 时，切换回自动跟随模式
+          setViewMode('agents');
+          console.log('[RealWorldMap] Agent clicked, switching to agents view mode');
           if (onAgentClick) {
             onAgentClick(agent.agent_id);
           }
         });
       });
 
-    // 如果有 Agent，将地图中心调整到包含所有 Agent 的区域
+    // 只有在 viewMode='agents' 时才自动调整地图视角到包含所有 Agent 的区域
     const agentsWithCoords = agents.filter(a => a.lat !== null && a.lng !== null);
-    if (agentsWithCoords.length > 0 && mapRef.current) {
+    if (agentsWithCoords.length > 0 && mapRef.current && viewMode === 'agents') {
       const bounds = L.latLngBounds(agentsWithCoords.map(a => [a.lat!, a.lng!]));
       map.fitBounds(bounds, { padding: [20, 20] });
     }
 
-  }, [agents, mapReady, onAgentClick]);
+  }, [agents, mapReady, onAgentClick, viewMode]);
 
   // 地图控制
   const zoomIn = () => mapRef.current?.zoomIn();
@@ -210,6 +257,8 @@ export function RealWorldMap({ agents, onAgentClick }: RealWorldMapProps) {
     }
   };
   const centerOnAgents = () => {
+    console.log('[RealWorldMap] Center on agents clicked, switching to agents view mode');
+    setViewMode('agents');
     if (mapRef.current) {
       const agentsWithCoords = agents.filter(a => a.lat !== null && a.lng !== null);
       if (agentsWithCoords.length > 0) {
@@ -223,7 +272,14 @@ export function RealWorldMap({ agents, onAgentClick }: RealWorldMapProps) {
     <div className="bg-white rounded-xl border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">真实世界地图</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-gray-900">真实世界地图</h2>
+            {currentRegion && (
+              <span className="text-sm text-world-600 bg-world-100 px-2 py-1 rounded">
+                {currentRegion.name}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-gray-500 mt-1">
             {agents.length} 个 Agent 分布在世界各地
           </p>
@@ -233,6 +289,36 @@ export function RealWorldMap({ agents, onAgentClick }: RealWorldMapProps) {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* 视图模式指示器 */}
+          <div className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            viewMode === 'region'
+              ? 'bg-world-100 text-world-700'
+              : 'bg-gray-100 text-gray-600'
+          }`}>
+            {viewMode === 'region' ? (
+              <span className="flex items-center gap-1">
+                <Layers className="w-3 h-3" />
+                城市视图
+              </span>
+            ) : (
+              <span className="flex items-center gap-1">
+                <Users className="w-3 h-3" />
+                跟随 Agent
+              </span>
+            )}
+          </div>
+
+          <button
+            onClick={() => setShowRegionSelector(!showRegionSelector)}
+            className={`p-2 rounded-lg transition-colors ${
+              showRegionSelector
+                ? 'bg-world-100 hover:bg-world-200 text-world-600'
+                : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+            }`}
+            title="切换地区"
+          >
+            <Layers className="w-4 h-4" />
+          </button>
           <button onClick={zoomIn} className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors" title="放大">
             <ZoomIn className="w-4 h-4 text-gray-600" />
           </button>
@@ -247,6 +333,17 @@ export function RealWorldMap({ agents, onAgentClick }: RealWorldMapProps) {
           </button>
         </div>
       </div>
+
+      {/* 地区选择器 */}
+      {showRegionSelector && (
+        <div className="mb-4">
+          <QuickCitySelector
+            selectedRegionId={selectedRegionId || null}
+            onRegionSelect={handleRegionSelect}
+            className="border border-world-200"
+          />
+        </div>
+      )}
 
       {/* 地图容器 */}
       <div
