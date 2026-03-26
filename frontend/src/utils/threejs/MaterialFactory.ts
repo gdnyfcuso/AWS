@@ -142,7 +142,7 @@ export class MaterialFactory {
       case 'water':
         return this.createWaterMaterial();
       case 'road':
-        return this.createRoadMaterial();
+        return this.createRoadMaterial(config.color);
       case 'grass':
         return this.createGrassMaterial();
       case 'building':
@@ -211,9 +211,9 @@ export class MaterialFactory {
   /**
    * 创建道路材质
    */
-  private createRoadMaterial(): THREE.Material {
+  private createRoadMaterial(color?: number | string): THREE.Material {
     return new THREE.MeshStandardMaterial({
-      color: CARTOON_COLORS.road,
+      color: color ?? CARTOON_COLORS.road,
       flatShading: true,
       roughness: 0.9,
       metalness: 0.0,

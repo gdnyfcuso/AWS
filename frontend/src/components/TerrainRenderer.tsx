@@ -7,14 +7,16 @@ import { geometryGenerator } from '../utils/threejs/GeometryGenerator';
 import { CARTOON_COLORS } from '../utils/threejs/MaterialFactory';
 
 /**
- * 地形特征数据接口
+ * 地形特征数据接口（与后端 TerrainFeature 类型保持一致）
  */
 export interface TerrainFeatureData {
   id: string;
-  type: 'mountain' | 'hill' | 'water' | 'river' | 'plain' | 'forest';
+  feature_id?: string;
+  type: 'mountain' | 'hill' | 'water' | 'river' | 'plain' | 'forest' | 'ocean';
   name?: string;
   position: { x: number; y: number; z: number };
   size: { width: number; height: number; depth: number };
+  realCoordinates?: { lat: number; lng: number };
   metadata?: Record<string, unknown>;
 }
 

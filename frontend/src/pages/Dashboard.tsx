@@ -53,7 +53,7 @@ export function Dashboard() {
   // 旧的地标数据（向后兼容）
   const { landmarks: regionLandmarks, loading: landmarksLoading } = useRegionLandmarks(selectedRegionId);
 
-  // 3D虚拟空间数据 - 使用城市级地形加载
+  // 3D虚拟空间数据 - 使用城市级地形加载（1:1比例）
   // 优先使用选中 Agent 的城市，如果没有选中则使用第一个 Agent
   const terrainAgentId = selectedAgentId || geographicAgents[0]?.agent_id || null;
   const { data: cityTerrainData, loading: cityTerrainLoading } = useCityTerrainByAgent(terrainAgentId, {
@@ -65,17 +65,21 @@ export function Dashboard() {
   const { data: defaultTerrainData } = useTerrainData(!cityTerrainData.city && !cityTerrainLoading);
 
   // 使用城市地形数据，如果没有则使用默认地形数据
-  // 当使用城市地理数据时，清空地形特征（城市没有山脉地形）
-  const terrainData = cityTerrainData.city && useCityData ? {
-    mountains: [],
-    hills: [],
-    rivers: [],
-    plains: [],
-  } : cityTerrainData.city ? {
-    mountains: cityTerrainData.mountains,
-    hills: cityTerrainData.hills,
-    rivers: cityTerrainData.rivers,
-    plains: cityTerrainData.plains,
+  // 注意：只有当城市地形数据实际包含特征时才使用它，否则使用默认地形数据
+  const hasCityTerrainFeatures = cityTerrainData.city && (
+    (cityTerrainData.mountains && cityTerrainData.mountains.length > 0) ||
+    (cityTerrainData.hills && cityTerrainData.hills.length > 0) ||
+    (cityTerrainData.rivers && cityTerrainData.rivers.length > 0) ||
+    (cityTerrainData.plains && cityTerrainData.plains.length > 0) ||
+    (cityTerrainData.waters && cityTerrainData.waters.length > 0)
+  );
+
+  const terrainData = hasCityTerrainFeatures ? {
+    mountains: cityTerrainData.mountains || [],
+    hills: cityTerrainData.hills || [],
+    rivers: cityTerrainData.rivers || [],
+    plains: cityTerrainData.plains || [],
+    waters: cityTerrainData.waters || [],
   } : defaultTerrainData;
 
   const { data: roadNetworkData } = useRoadNetwork(true);
@@ -162,7 +166,12 @@ export function Dashboard() {
 
   // 获取 3D 虚拟空间的建筑数据
   // 优先使用城市地理数据，否则使用旧的地区数据
-  const useCityData = !!cityGeography && cityGeography.landmarks && cityGeography.landmarks.length > 0;
+  // 检查是否有任何城市数据（地标、道路或河流）
+  const useCityData = !!cityGeography && (
+    (cityGeography.landmarks && cityGeography.landmarks.length > 0) ||
+    (cityGeography.roads && cityGeography.roads.length > 0) ||
+    (cityGeography.rivers && cityGeography.rivers.length > 0)
+  );
 
   // 调试日志
   console.log('[Dashboard] useCityData check:', {
@@ -171,6 +180,10 @@ export function Dashboard() {
     cityGeographyKeys: cityGeography ? Object.keys(cityGeography) : [],
     hasLandmarks: !!cityGeography?.landmarks,
     landmarksCount: cityGeography?.landmarks?.length || 0,
+    hasRoads: !!cityGeography?.roads,
+    roadsCount: cityGeography?.roads?.length || 0,
+    hasRivers: !!cityGeography?.rivers,
+    riversCount: cityGeography?.rivers?.length || 0,
     useCityData,
     geographyLoading,
   });
@@ -231,6 +244,8 @@ export function Dashboard() {
   const cityRoads = useCityData && cityGeography.roads ? cityGeography.roads.map((road: any) => ({
     id: road.id,
     name: road.name,
+    nameEn: road.nameEn,
+    type: road.type,  // 保留 type 字段
     path: road.path,
     width: road.width / 10,  // 转换为虚拟空间单位
     lanes: road.lanes,
@@ -406,22 +421,41 @@ export function Dashboard() {
                   <div>roads.length: <span className="text-green-400">{(useCityData ? cityRoads : roadNetworkData.roads)?.length || 0}</span></div>
                   <div>intersections.length: <span className="text-green-400">{(useCityData ? [] : roadNetworkData.intersections)?.length || 0}</span></div>
                   <div>rivers.length: <span className="text-green-400">{cityRivers.length}</span></div>
-                  <div>enableTerrain: <span className="text-green-400">{(!useCityData).toString()}</span></div>
+                  <div>terrainFeatures.length: <span className="text-green-400">{[...terrainData.mountains, ...terrainData.hills, ...terrainData.rivers, ...terrainData.plains].length}</span></div>
+                  <div>enableTerrain: <span className="text-green-400">true (1:1 scale)</span></div>
                 </div>
                 <div className="border-t border-gray-600 mt-2 pt-2">
                   <div className="text-gray-400">cityRoads详情:</div>
                   {cityRoads.map((r, i) => (
                     <div key={i} className="text-blue-300">
-                      {r.name}: {r.path?.length || 0} points, type={r.type}
+                      {r.name}: {r.path?.length || 0} points, type={r.type}, color={r.color}, width={r.width}
                     </div>
                   ))}
                 </div>
                 <div className="border-t border-gray-600 mt-2 pt-2">
-                  <div className="text-gray-400">Scene Key: <span className="text-yellow-400">{useCityData ? `city-${selectedRegionId}` : 'default'}</span></div>
+                  <div className="text-gray-400">terrainFeatures详情:</div>
+                  <div className="text-xs max-h-32 overflow-auto">
+                    {[...terrainData.mountains, ...terrainData.hills, ...terrainData.rivers, ...terrainData.plains].map((f, i) => (
+                      <div key={i} className="text-purple-300">
+                        {f.type}: {f.name || 'unnamed'} pos=({f.position?.x?.toFixed(0)}, {f.position?.z?.toFixed(0)}) size={f.size?.width?.toFixed(0)}x{f.size?.height?.toFixed(0)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="border-t border-gray-600 mt-2 pt-2">
+                  <div className="text-gray-400">cityBounds:</div>
+                  <div className="text-xs text-yellow-300">
+                    {cityGeography?.bounds ? (
+                      <>
+                        min: ({cityGeography.bounds.min.x?.toFixed(0)}, {cityGeography.bounds.min.y?.toFixed(0)}, {cityGeography.bounds.min.z?.toFixed(0)}) |
+                        max: ({cityGeography.bounds.max.x?.toFixed(0)}, {cityGeography.bounds.max.y?.toFixed(0)}, {cityGeography.bounds.max.z?.toFixed(0)})
+                      </>
+                    ) : 'null'}
+                  </div>
                 </div>
               </div>
               <VirtualSpace3D
-                key={useCityData ? `city-${selectedRegionId}` : 'default'}
+                key={selectedRegionId ? `city-${selectedRegionId}` : 'default'}
                 agents={displayAgents}
                 buildings={virtualBuildings}
                 onAgentClick={handleVirtualAgentClick}
@@ -441,10 +475,14 @@ export function Dashboard() {
                 // 新增：城市特定的河流数据
                 rivers={cityRivers}
                 // 新增：城市边界，用于限制相机视角
-                cityBounds={useCityData ? cityGeography?.bounds : null}
+                cityBounds={useCityData && cityGeography?.bounds ? {
+                  min: { x: cityGeography.bounds.min.x, y: cityGeography.bounds.min.y, z: cityGeography.bounds.min.z },
+                  max: { x: cityGeography.bounds.max.x, y: cityGeography.bounds.max.y, z: cityGeography.bounds.max.z },
+                } : null}
                 // 新增：城市中心，用于初始相机位置
                 cityCenter={useCityData ? cityGeography?.city?.center : null}
-                enableTerrain={!useCityData}
+                // 启用地形渲染（包括城市地形，后端已使用1:1比例生成）
+                enableTerrain={true}
                 enableRoads={true}
                 enableVehicles={true}
                 externalIsFullscreen={is3DFullscreen}

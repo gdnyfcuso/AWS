@@ -317,7 +317,7 @@ export const CITIES_CONFIG: Record<string, CityConfig> = {
 };
 
 /**
- * 根据城市名称获取配置
+ * 根据城市名称获取配置（支持中文名称）
  */
 export function getCityConfig(cityName: string): CityConfig | null {
   // 标准化城市名称
@@ -325,7 +325,19 @@ export function getCityConfig(cityName: string): CityConfig | null {
     .replace(/市$/, '')
     .replace(/\s+/g, '');
 
-  return CITIES_CONFIG[normalizedKey] || null;
+  // 首先尝试直接查找
+  if (CITIES_CONFIG[normalizedKey]) {
+    return CITIES_CONFIG[normalizedKey];
+  }
+
+  // 如果没找到，尝试通过中文名称匹配
+  for (const [key, config] of Object.entries(CITIES_CONFIG)) {
+    if (config.name === cityName || config.nameEn.toLowerCase() === normalizedKey) {
+      return config;
+    }
+  }
+
+  return null;
 }
 
 /**

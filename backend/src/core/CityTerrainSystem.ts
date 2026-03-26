@@ -260,17 +260,17 @@ export class CityTerrainSystem {
   }
 
   /**
-   * 生成北京地形
+   * 生成北京地形（集中展示版 - 地形特征位于城市中心附近）
    */
   private async generateBeijingTerrain(
     toVirtual: (lat: number, lng: number, y?: number) => { x: number; y: number; z: number },
     terrainData: TerrainData
   ): Promise<void> {
-    // 西部山区（太行山脉余脉）
+    // 西部山区（太行山脉余脉）- 放置在西北方向，距离中心500-800米
     const westernMountains: MountainConfig[] = [
       {
         name: '太行山余脉-主峰',
-        position: toVirtual(39.75, 115.7, 150),
+        position: { x: -600, y: 150, z: -400 },  // 西北方向
         height: 180,
         baseRadius: 80,
         hasSnowCap: false,
@@ -279,7 +279,7 @@ export class CityTerrainSystem {
       },
       {
         name: '百花山',
-        position: toVirtual(39.85, 115.6, 120),
+        position: { x: -700, y: 120, z: -200 },
         height: 140,
         baseRadius: 60,
         hasSnowCap: false,
@@ -288,7 +288,7 @@ export class CityTerrainSystem {
       },
       {
         name: '灵山',
-        position: toVirtual(39.95, 115.5, 160),
+        position: { x: -500, y: 160, z: -600 },
         height: 170,
         baseRadius: 70,
         hasSnowCap: true,
@@ -303,11 +303,11 @@ export class CityTerrainSystem {
       terrainData.mountains.push(this.createMountainFeature(config));
     }
 
-    // 北部山区（燕山山脉）
+    // 北部山区（燕山山脉）- 放置在北方向
     const northernMountains: MountainConfig[] = [
       {
         name: '海坨山',
-        position: toVirtual(40.55, 115.85, 200),
+        position: { x: 200, y: 200, z: -700 },  // 北方向
         height: 200,
         baseRadius: 90,
         hasSnowCap: true,
@@ -318,7 +318,7 @@ export class CityTerrainSystem {
       },
       {
         name: '雾灵山',
-        position: toVirtual(40.35, 117.25, 180),
+        position: { x: 500, y: 180, z: -500 },
         height: 185,
         baseRadius: 85,
         hasSnowCap: true,
@@ -329,7 +329,7 @@ export class CityTerrainSystem {
       },
       {
         name: '云蒙山',
-        position: toVirtual(40.45, 116.75, 160),
+        position: { x: 300, y: 165, z: -600 },
         height: 165,
         baseRadius: 75,
         hasSnowCap: false,
@@ -342,15 +342,15 @@ export class CityTerrainSystem {
       terrainData.mountains.push(this.createMountainFeature(config));
     }
 
-    // 永定河
+    // 永定河 - 从西北流向东南，穿过城市中心
     terrainData.rivers.push(this.createRiverFeature({
       name: '永定河',
       path: [
-        toVirtual(39.85, 115.5),
-        toVirtual(39.82, 115.8),
-        toVirtual(39.78, 116.1),
-        toVirtual(39.75, 116.3),
-        toVirtual(39.70, 116.5),
+        { x: -700, y: 0, z: -300 },
+        { x: -400, y: 0, z: -100 },
+        { x: -100, y: 0, z: 100 },
+        { x: 200, y: 0, z: 300 },
+        { x: 500, y: 0, z: 500 },
       ],
       width: 15,
       depth: 3,
@@ -358,15 +358,15 @@ export class CityTerrainSystem {
       transparency: 0.6,
     }));
 
-    // 潮白河
+    // 潮白河 - 从东北流向西南
     terrainData.rivers.push(this.createRiverFeature({
       name: '潮白河',
       path: [
-        toVirtual(40.3, 116.8),
-        toVirtual(40.15, 116.85),
-        toVirtual(39.95, 116.9),
-        toVirtual(39.75, 116.95),
-        toVirtual(39.6, 116.85),
+        { x: 600, y: 0, z: -400 },
+        { x: 400, y: 0, z: -200 },
+        { x: 200, y: 0, z: -100 },
+        { x: 100, y: 0, z: 0 },
+        { x: -200, y: 0, z: 200 },
       ],
       width: 18,
       depth: 4,
@@ -758,7 +758,7 @@ export class CityTerrainSystem {
       const city = terrainData.city;
       if (!city) return;
 
-      await db.city.upsert({
+      const cityRecord = await db.city.upsert({
         where: { city_id: cityId },
         create: {
           city_id: cityId,
@@ -786,12 +786,15 @@ export class CityTerrainSystem {
         },
       });
 
-      // 删除旧的缓存特征
+      // 使用City记录的实际ID来关联地形特征
+      const databaseCityId = cityRecord.id;
+
+      // 删除旧的缓存特征（使用city_id字段）
       await db.terrainFeature.deleteMany({
         where: { city_id: cityId },
       });
 
-      // 存储地形特征到数据库
+      // 存储地形特征到数据库（使用数据库记录的ID）
       const allFeatures = [
         ...terrainData.mountains.map(f => ({ ...f, type: 'mountain' })),
         ...terrainData.hills.map(f => ({ ...f, type: 'hill' })),
@@ -810,7 +813,7 @@ export class CityTerrainSystem {
             size: feature.size,
             real_coordinates: feature.realCoordinates,
             metadata: feature.metadata,
-            city_id: cityId,
+            city_id: databaseCityId, // 使用数据库记录的实际ID
           },
         });
       }

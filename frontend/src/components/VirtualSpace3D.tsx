@@ -81,6 +81,12 @@ type ViewMode = 'first-person' | 'second-person' | 'third-person';
 
 // 根据道路类型获取颜色
 function getRoadColor(type: string): number {
+  // 处理空或未定义的 type
+  if (!type) {
+    console.warn('[VirtualSpace3D] Road type is missing, using default color');
+    return CARTOON_COLORS.road;
+  }
+
   switch (type) {
     case 'highway':
       return 0x2d2d2d;
@@ -93,6 +99,7 @@ function getRoadColor(type: string): number {
     case 'alley':
       return 0x555555;
     default:
+      console.warn(`[VirtualSpace3D] Unknown road type: "${type}", using default color`);
       return CARTOON_COLORS.road;
   }
 }
@@ -488,14 +495,27 @@ export function VirtualSpace3D({
 
   // 检查 WebGL 支持
   useEffect(() => {
+    // 只在浏览器环境中检查
+    if (typeof window === 'undefined') {
+      return;
+    }
+
     try {
       const canvas = document.createElement('canvas');
       const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
 
       if (!gl) {
+        console.warn('[VirtualSpace3D] WebGL not supported');
         setWebGLError(true);
+      } else {
+        console.log('[VirtualSpace3D] WebGL is supported:', {
+          webgl2: !!canvas.getContext('webgl2'),
+          webgl1: !!canvas.getContext('webgl'),
+          renderer: gl.getParameter?.(gl.RENDERER),
+        });
       }
     } catch (e) {
+      console.error('[VirtualSpace3D] WebGL check failed:', e);
       setWebGLError(true);
     }
   }, []);
@@ -503,12 +523,18 @@ export function VirtualSpace3D({
   // 初始化 Three.js 场景 - 只运行一次
   useEffect(() => {
     // 如果WebGL不支持，直接返回
-    if (webGLError) return;
+    if (webGLError) {
+      console.warn('[VirtualSpace3D] Skipping initialization due to WebGL error');
+      return;
+    }
 
     // 如果已经初始化过，直接返回
     if (sceneReady || initAttempted) return;
 
-    if (!containerRef.current) return;
+    if (!containerRef.current) {
+      console.warn('[VirtualSpace3D] Container ref not ready');
+      return;
+    }
 
     setInitAttempted(true);
 
@@ -530,12 +556,62 @@ export function VirtualSpace3D({
       // 创建场景
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(0x87CEEB); // 天空蓝
-      scene.fog = new THREE.Fog(0x87CEEB, 100, 800); // 扩大雾效范围
       sceneRef.current = scene;
 
-      // 创建相机 - 调整为适合大地图的位置
-      const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 2000);
-      camera.position.set(200, 150, 200); // 适应更大地图
+      // 根据城市边界动态计算相机参数
+      // 如果提供了城市边界，使用它来计算合适的相机位置和far值
+      let cameraPos: { x: number; y: number; z: number };
+      let cameraFar: number;
+      let groundSize: number;
+
+      console.log(`[VirtualSpace3D] Camera calculation: cityBounds=`, cityBounds);
+
+      if (cityBounds && cityBounds.min && cityBounds.max) {
+        // 计算城市的实际尺寸（米）
+        const cityWidth = cityBounds.max.x - cityBounds.min.x;
+        const cityDepth = cityBounds.max.z - cityBounds.min.z;
+        const maxDimension = Math.max(cityWidth, cityDepth);
+
+        // 相机距离设置为最大尺寸的80%
+        const cameraDistance = Math.max(maxDimension * 0.8, 500);
+        cameraFar = maxDimension * 3; // far值设为最大尺寸的3倍，确保能看到所有内容
+
+        // 相机位置：从东南方向俯视城市
+        cameraPos = {
+          x: cameraDistance * 0.7,
+          y: cameraDistance * 0.5,
+          z: cameraDistance * 0.7,
+        };
+
+        // 地面尺寸略大于城市边界
+        groundSize = maxDimension * 1.2;
+
+        console.log(`[VirtualSpace3D] Using city bounds:`, {
+          cityWidth: cityWidth.toFixed(0),
+          cityDepth: cityDepth.toFixed(0),
+          maxDimension: maxDimension.toFixed(0),
+          cameraDistance: cameraDistance.toFixed(0),
+          cameraFar: cameraFar.toFixed(0),
+          groundSize: groundSize.toFixed(0),
+        });
+      } else {
+        // 默认配置（2km范围）
+        const defaultSize = 2000;
+        cameraPos = { x: 500, y: 400, z: 500 };
+        cameraFar = 5000;
+        groundSize = defaultSize;
+
+        console.log(`[VirtualSpace3D] Using default configuration (no city bounds)`);
+      }
+
+      // 根据城市范围动态设置雾效范围（在groundSize计算之后）
+      const fogStart = cityBounds ? groundSize * 0.1 : 500;
+      const fogEnd = cityBounds ? groundSize * 0.6 : 3000;
+      scene.fog = new THREE.Fog(0x87CEEB, fogStart, fogEnd);
+
+      // 创建相机
+      const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, cameraFar);
+      camera.position.set(cameraPos.x, cameraPos.y, cameraPos.z);
       camera.lookAt(0, 0, 0);
       cameraRef.current = camera;
 
@@ -543,26 +619,33 @@ export function VirtualSpace3D({
       const renderer = new THREE.WebGLRenderer({
         antialias: true,
         alpha: true,
-        powerPreference: 'high-performance'
+        powerPreference: 'high-performance',
+        failIfMajorPerformanceCaveat: false,  // 在性能较低的设备上也尝试创建
       });
       renderer.setSize(width, height);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setPixelRatio(Math.min((window.devicePixelRatio || 1), 2));
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFShadowMap;
       renderer.setClearColor(0x87CEEB, 1);
       container.appendChild(renderer.domElement);
       rendererRef.current = renderer;
 
-      // 添加轨道控制器
+      console.log('[VirtualSpace3D] Renderer created successfully');
+
+      // 添加轨道控制器 - 根据城市范围动态设置限制
       const controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
       controls.dampingFactor = 0.05;
-      controls.autoRotate = false;
-      controls.maxPolarAngle = Math.PI / 2 - 0.1; // 限制不能钻到地下
-      controls.minDistance = 50; // 调整最小距离
-      controls.maxDistance = 1500; // 扩大最大距离以查看整个场景
-      controls.target.set(0, 0, 0); // 设置旋转中心点
+      // minDistance 和 maxDistance 应该基于场景规模
+      const minDist = cityBounds ? 20 : 100;
+      const maxDist = cityBounds ? cameraFar * 0.4 : 2000; // 最大距离为far值的40%
+      controls.minDistance = minDist;
+      controls.maxDistance = maxDist;
+      controls.maxPolarAngle = Math.PI / 2 - 0.1;
+      controls.target.set(0, 0, 0);
       controlsRef.current = controls;
+
+      console.log(`[VirtualSpace3D] OrbitControls: minDistance=${minDist}, maxDistance=${maxDist.toFixed(0)}`);
 
       // 添加光源 - 扩大光照范围
       const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
@@ -574,11 +657,13 @@ export function VirtualSpace3D({
       directionalLight.shadow.mapSize.width = 4096;
       directionalLight.shadow.mapSize.height = 4096;
       directionalLight.shadow.camera.near = 1;
-      directionalLight.shadow.camera.far = 1000;
-      directionalLight.shadow.camera.left = -500;
-      directionalLight.shadow.camera.right = 500;
-      directionalLight.shadow.camera.top = 500;
-      directionalLight.shadow.camera.bottom = -500;
+      // 根据城市范围动态设置阴影相机边界
+      const shadowExtent = cityBounds ? (groundSize / 2) : 500;
+      directionalLight.shadow.camera.far = Math.max(shadowExtent * 2, 1000);
+      directionalLight.shadow.camera.left = -shadowExtent;
+      directionalLight.shadow.camera.right = shadowExtent;
+      directionalLight.shadow.camera.top = shadowExtent;
+      directionalLight.shadow.camera.bottom = -shadowExtent;
       scene.add(directionalLight);
 
       // 添加半球光（天空和地面反射）
@@ -613,7 +698,8 @@ export function VirtualSpace3D({
       (sceneRef.current as any).buildingsGroup = buildingsGroup;
 
       // 添加基础地面（绿色草地）作为视觉参考
-      const groundGeometry = new THREE.PlaneGeometry(2000, 2000);
+      // 地面尺寸已在上面根据城市边界计算
+      const groundGeometry = new THREE.PlaneGeometry(groundSize, groundSize);
       const groundMaterial = new THREE.MeshStandardMaterial({
         color: 0x7cfc00,
         roughness: 0.9,
@@ -621,23 +707,12 @@ export function VirtualSpace3D({
       });
       const ground = new THREE.Mesh(groundGeometry, groundMaterial);
       ground.rotation.x = -Math.PI / 2;
-      ground.position.y = -0.1; // 略低于其他元素
+      ground.position.y = -0.1;
       ground.receiveShadow = true;
       ground.name = 'Ground';
       scene.add(ground);
 
-      // 添加地面（如果没有启用地形）
-      if (!enableTerrain) {
-        const groundGeometry = new THREE.PlaneGeometry(1000, 1000);
-        const groundMaterial = new THREE.MeshStandardMaterial({
-          color: 0x7cfc00,
-          roughness: 0.8
-        });
-        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-        ground.rotation.x = -Math.PI / 2;
-        ground.receiveShadow = true;
-        scene.add(ground);
-      }
+      console.log(`[VirtualSpace3D] Ground: ${groundSize.toFixed(0)}m x ${groundSize.toFixed(0)}m`);
 
       // 添加 Agent 组
       agentMeshesRef.current = new THREE.Group();
@@ -1329,6 +1404,14 @@ export function VirtualSpace3D({
       }
 
       buildingsGroup.add(buildingGroup);
+
+      // 添加建筑物标签
+      if (building.name) {
+        // 标签位置在建筑物顶部（building.y + building.height 是建筑物顶部）
+        const labelPosition = new THREE.Vector3(building.x, building.y + building.height, building.z);
+        const label = createTerrainLabel(building.name, 'building', labelPosition, building.height);
+        buildingsGroup.add(label);
+      }
     });
 
     console.log(`[VirtualSpace3D#${instanceId.current}] Buildings rendered:`, {
@@ -1338,14 +1421,101 @@ export function VirtualSpace3D({
     // 记录已渲染的建筑版本
     renderedBuildingsRef.current = buildingsVersion;
 
-  }, [buildings, sceneReady, instanceId.current]);
+  }, [buildings, sceneReady]);
+
+  // 创建地形特征标签
+  const createTerrainLabel = (name: string, featureType: string, position: THREE.Vector3, height?: number): THREE.Mesh => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d')!;
+    canvas.width = 256;
+    canvas.height = 64;
+
+    // 根据特征类型设置不同颜色
+    const typeColors: Record<string, string> = {
+      mountain: '#8B4513',
+      hill: '#228B22',
+      water: '#3B82F6',
+      river: '#60A5FA',
+      lake: '#3B82F6',
+      valley: '#9CA3AF',
+      canyon: '#D97706',
+      building: '#F59E0B',
+      road: '#6B7280',
+    };
+
+    const labelColor = typeColors[featureType] || '#6B7280';
+
+    // 标签背景
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.roundRect(0, 0, 256, 64, 8);
+    ctx.fill();
+
+    // 边框
+    ctx.strokeStyle = labelColor;
+    ctx.lineWidth = 3;
+    ctx.roundRect(0, 0, 256, 64, 8);
+    ctx.stroke();
+
+    // 名称
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.fillText(name, 128, 28);
+
+    // 类型
+    ctx.font = '14px sans-serif';
+    ctx.fillStyle = labelColor;
+    ctx.fillText(featureType.toUpperCase(), 128, 50);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const labelGeometry = new THREE.PlaneGeometry(8, 2);
+    const labelMaterial = new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      side: THREE.DoubleSide
+    });
+    const label = new THREE.Mesh(labelGeometry, labelMaterial);
+
+    // 根据特征类型和高度设置标签位置 - 紧贴物体
+    let labelHeight;
+    if (featureType === 'mountain' || featureType === 'hill') {
+      // 山脉和山丘：标签在山顶上方2单位
+      labelHeight = height ? height + 2 : 2;
+    } else if (featureType === 'building') {
+      // 建筑物：标签在屋顶上方1单位
+      labelHeight = height ? height + 1 : 1;
+    } else if (featureType === 'water' || featureType === 'river' || featureType === 'lake') {
+      // 水面和河流：标签在水面上方1单位
+      labelHeight = 1;
+    } else if (featureType === 'road') {
+      // 道路：标签在路面上方1单位
+      labelHeight = 1;
+    } else {
+      // 其他：标签在地面上方1单位
+      labelHeight = 1;
+    }
+
+    label.position.set(position.x, labelHeight, position.z);
+    label.userData = {
+      isTerrainLabel: true,
+      featureName: name,
+      featureType: featureType,
+    };
+
+    return label;
+  };
 
   // 渲染地形
   useEffect(() => {
     if (!sceneReady || !sceneRef.current || !enableTerrain) return;
 
     const terrainGroup = (sceneRef.current as any).terrainGroup as THREE.Group;
-    if (!terrainGroup) return;
+    if (!terrainGroup) {
+      console.warn('[VirtualSpace3D] No terrainGroup found in scene');
+      return;
+    }
+
+    console.log(`[VirtualSpace3D] Rendering terrain with ${terrainFeatures.length} features`);
 
     // 清空现有地形
     while (terrainGroup.children.length > 0) {
@@ -1360,7 +1530,16 @@ export function VirtualSpace3D({
     }
 
     // 渲染地形特征
-    terrainFeatures.forEach(feature => {
+    console.log(`[VirtualSpace3D] Starting to render ${terrainFeatures.length} terrain features`);
+    terrainFeatures.forEach((feature, index) => {
+      console.log(`[VirtualSpace3D] Feature ${index}:`, {
+        id: feature.id,
+        type: feature.type,
+        name: feature.name,
+        position: feature.position,
+        size: feature.size,
+      });
+
       let mesh: THREE.Object3D | null = null;
 
       if (feature.type === 'mountain') {
@@ -1369,6 +1548,13 @@ export function VirtualSpace3D({
         const snowCapHeight = metadata?.snowCapHeight as number ?? 50;
         const roughness = metadata?.roughness as number ?? 0.7;
         const color = metadata?.color as string | undefined;
+
+        console.log(`[VirtualSpace3D] Creating mountain:`, feature.name, {
+          position: feature.position,
+          size: feature.size,
+          hasSnowCap,
+          color,
+        });
 
         mesh = geometryGenerator.createMountain({
           height: feature.size.height,
@@ -1405,9 +1591,23 @@ export function VirtualSpace3D({
         const transparency = metadata?.transparency as number ?? 0.7;
         const color = metadata?.color as string | undefined;
 
+        console.log(`[VirtualSpace3D] Processing ${feature.type}:`, feature.name, {
+          hasPath: !!(metadata?.path),
+          pathLength: Array.isArray(metadata?.path) ? metadata.path.length : 0,
+          width: metadata?.width,
+          color: color,
+        });
+
         if (feature.type === 'river') {
           const pathData = metadata?.path as Array<{ x: number; y: number; z: number }> | undefined;
           const width = metadata?.width as number ?? 15;
+
+          console.log(`[VirtualSpace3D] Creating river mesh:`, {
+            name: feature.name,
+            pathData: pathData?.map(p => `(${p.x}, ${p.y}, ${p.z})`),
+            width,
+            color,
+          });
 
           if (pathData && pathData.length > 1) {
             // Convert plain objects to THREE.Vector3
@@ -1443,22 +1643,43 @@ export function VirtualSpace3D({
       }
 
       if (mesh) {
-        // 山和山丘应该放在地面上（y=0）
-        // 河流已经在 createWater 中设置了正确的位置（-0.5）
-        // 水面也已经在 createWater 中设置了位置
+        // 设置地形特征的位置
+        // 山和山丘：使用原始 position.y 作为基础海拔
+        // 河流和水面：使用略微负值使其嵌入地面
         let yPos = feature.position.y;
-        if (feature.type === 'mountain' || feature.type === 'hill') {
-          yPos = 0;
-        } else if (feature.type === 'water' || feature.type === 'river') {
-          // 河流和水面的位置已经在创建时设置，这里不覆盖
-          yPos = 0;
+        if (feature.type === 'water' || feature.type === 'river') {
+          // 河流和水面略微低于地面
+          yPos = -0.1;
         }
+        // 对于山脉和山丘，保留后端设置的基础海拔
         mesh.position.set(feature.position.x, yPos, feature.position.z);
         mesh.name = feature.name || `Terrain_${feature.id}`;
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         terrainGroup.add(mesh);
+
+        console.log(`[VirtualSpace3D] Added terrain mesh:`, feature.name, `at (${feature.position.x}, ${yPos}, ${feature.position.z})`);
+
+        // 添加地形特征名称标签
+        if (feature.name) {
+          const labelPosition = new THREE.Vector3(feature.position.x, yPos, feature.position.z);
+          const featureHeight = feature.size.height || 0;
+          const label = createTerrainLabel(feature.name, feature.type, labelPosition, featureHeight);
+          terrainGroup.add(label);
+          console.log(`[VirtualSpace3D] Added terrain label for: ${feature.name} (${feature.type})`);
+        }
       }
+    });
+
+    console.log(`[VirtualSpace3D] Terrain rendering complete:`, {
+      totalFeatures: terrainFeatures.length,
+      addedToGroup: terrainGroup.children.length,
+      breakdown: {
+        mountains: terrainFeatures.filter(f => f.type === 'mountain').length,
+        hills: terrainFeatures.filter(f => f.type === 'hill').length,
+        rivers: terrainFeatures.filter(f => f.type === 'river').length,
+        waters: terrainFeatures.filter(f => f.type === 'water').length,
+      },
     });
 
   }, [terrainFeatures, sceneReady, enableTerrain]);
@@ -1529,16 +1750,34 @@ export function VirtualSpace3D({
 
     console.log('[VirtualSpace3D] Cleared', toRemove.length, 'old road meshes, children after clear:', roadsGroup.children.length);
 
+    // 清空材质缓存，确保使用新的道路颜色
+    materialFactory.clearCache();
+
     // 渲染道路
     let segmentsRendered = 0;
     let meshesAdded = 0;
     roads.forEach(road => {
-      if (!road.path || road.path.length < 2) return;
+      if (!road.path || road.path.length < 2) {
+        console.warn('[VirtualSpace3D] Skipping road with invalid path:', road.name, {
+          hasPath: !!road.path,
+          pathLength: road.path?.length || 0,
+        });
+        return;
+      }
 
-      const roadColor = getRoadColor(road.type);
+      // 优先使用 Dashboard 传入的 color，如果没有则使用 getRoadColor
+      let roadColor: number;
+      if (road.color) {
+        // 将十六进制字符串转换为数字颜色 (#RRGGBB -> 0xRRGGBB)
+        roadColor = parseInt(road.color.replace('#', ''), 16);
+        console.log('[VirtualSpace3D] Using dashboard color for road:', road.name, road.color);
+      } else {
+        roadColor = getRoadColor(road.type);
+      }
+
       const path = road.path.map(p => new THREE.Vector3(p.x, p.y, p.z));
 
-      console.log('[VirtualSpace3D] Rendering road:', road.name, 'with', path.length, 'points');
+      console.log('[VirtualSpace3D] Rendering road:', road.name, 'type:', road.type, 'color:', roadColor.toString(16), 'with', path.length, 'points');
 
       for (let i = 0; i < path.length - 1; i++) {
         const start = path[i];
@@ -1576,6 +1815,16 @@ export function VirtualSpace3D({
 
         // 边缘线
         addEdgeMarkings(roadsGroup, start, end, road.width, angle);
+      }
+
+      // 添加道路标签（在道路中点，紧贴路面）
+      if (road.name && path.length > 0) {
+        const midIndex = Math.floor(path.length / 2);
+        const midPoint = path[midIndex];
+        // 道路在 y = 0.15 的位置，标签紧贴路面
+        const labelPosition = new THREE.Vector3(midPoint.x, 0.15, midPoint.z);
+        const label = createTerrainLabel(road.name, 'road', labelPosition, 0);
+        roadsGroup.add(label);
       }
     });
 
@@ -1630,7 +1879,7 @@ export function VirtualSpace3D({
     // 记录已渲染的道路版本
     renderedRoadsRef.current = roadsVersion;
 
-  }, [roads, intersections, sceneReady, enableRoads, instanceId.current]);
+  }, [roads, intersections, sceneReady, enableRoads]);
 
   // 渲染车辆
   useEffect(() => {
@@ -1750,7 +1999,22 @@ export function VirtualSpace3D({
       }
     });
 
-    console.log(`[VirtualSpace3D] Rendered ${rivers.length} rivers`);
+    // 为每条河流添加标签
+    rivers.forEach(river => {
+      if (!river.name || !river.path || river.path.length < 2) return;
+
+      // 计算河流中心点位置
+      const midIndex = Math.floor(river.path.length / 2);
+      const midPoint = river.path[midIndex];
+      // 河流在 y = -0.1 的位置，标签紧贴水面
+      const labelPosition = new THREE.Vector3(midPoint.x, -0.1, midPoint.z);
+
+      const label = createTerrainLabel(river.name, 'river', labelPosition, 0);
+      riversGroup.add(label);
+      console.log(`[VirtualSpace3D] Added river label for: ${river.name}`);
+    });
+
+    console.log(`[VirtualSpace3D] Rendered ${rivers.length} rivers with labels`);
   }, [rivers, sceneReady]);
 
   // 聚焦到指定的 Agent（需要在 useEffect 之前定义）
