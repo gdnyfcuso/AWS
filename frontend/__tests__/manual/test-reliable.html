@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>中国地图 - 可靠地图源</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }
+    .container { max-width: 1400px; margin: 0 auto; }
+    .header { background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+    h1 { color: #333; margin-bottom: 5px; }
+    .subtitle { color: #666; font-size: 14px; }
+    .main-content { display: grid; grid-template-columns: 1fr 320px; gap: 20px; }
+    .map-container { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+    .sidebar { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); max-height: 650px; overflow-y: auto; }
+    #status { padding: 12px; margin-bottom: 15px; border-radius: 8px; font-size: 14px; }
+    .status-info { background: #e3f2fd; color: #1976d2; }
+    .status-success { background: #e8f5e9; color: #388e3c; }
+    .status-error { background: #ffebee; color: #d32f2f; }
+    #map { width: 100%; height: 520px; border-radius: 8px; border: 2px solid #e0e0e0; }
+    .section { margin-bottom: 20px; }
+    .section h3 { font-size: 16px; margin-bottom: 10px; color: #333; display: flex; align-items: center; gap: 6px; }
+    #cities { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .city-btn { padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; transition: all 0.2s; font-weight: 500; }
+    .city-btn:hover { transform: scale(1.03); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4); }
+    .city-btn:active { transform: scale(0.97); }
+    #info { background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%); padding: 14px; border-radius: 8px; font-size: 13px; border-left: 4px solid #667eea; }
+    .layer-control { margin-top: 15px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .layer-btn { padding: 8px 14px; border: 2px solid #667eea; background: white; border-radius: 20px; cursor: pointer; font-size: 12px; transition: all 0.2s; font-weight: 500; }
+    .layer-btn.active { background: #667eea; color: white; }
+    .layer-btn:hover { border-color: #764ba2; }
+    .breadcrumb { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; font-size: 12px; }
+    .breadcrumb-item { padding: 4px 10px; background: #f0f0f0; border-radius: 12px; cursor: pointer; transition: all 0.2s; }
+    .breadcrumb-item:hover { background: #667eea; color: white; }
+    @media (max-width: 900px) {
+      .main-content { grid-template-columns: 1fr; }
+    }
+  </style>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🗺️ 中国地图 - 地区切换系统</h1>
+      <p class="subtitle">支持国家 → 城市 → 区县 → 村庄/地标 四级导航 | 已验证可靠地图源</p>
+    </div>
+
+    <div class="main-content">
+      <div class="map-container">
+        <div id="status" class="status-info">
+          <span id="statusText">⏳ 正在初始化...</span>
+        </div>
+        <div id="map"></div>
+        <div class="layer-control">
+          <span style="font-size: 13px; color: #666; padding-top: 6px;">地图风格：</span>
+          <button class="layer-btn active" onclick="switchLayer('osm')">标准街道</button>
+          <button class="layer-btn" onclick="switchLayer('osm-hot')">热点图</button>
+          <button class="layer-btn" onclick="switchLayer('osm-topo')">地形图</button>
+          <button class="layer-btn" onclick="switchLayer('dark')">暗色模式</button>
+        </div>
+      </div>
+
+      <div class="sidebar">
+        <div class="section">
+          <h3>🏙️ 主要城市</h3>
+          <div id="cities">
+            <button class="city-btn" onclick="goToCity('beijing', '北京')">北京</button>
+            <button class="city-btn" onclick="goToCity('shanghai', '上海')">上海</button>
+            <button class="city-btn" onclick="goToCity('guangzhou', '广州')">广州</button>
+            <button class="city-btn" onclick="goToCity('shenzhen', '深圳')">深圳</button>
+            <button class="city-btn" onclick="goToCity('hangzhou', '杭州')">杭州</button>
+            <button class="city-btn" onclick="goToCity('chengdu', '成都')">成都</button>
+            <button class="city-btn" onclick="goToCity('xian', '西安')">西安</button>
+            <button class="city-btn" onclick="goToCity('china', '中国全图')">🏠 返回全图</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>📍 当前位置</h3>
+          <div id="info">请选择一个城市...</div>
+          <div id="breadcrumb" class="breadcrumb"></div>
+        </div>
+
+        <div class="section">
+          <h3>🏘️ 子地区</h3>
+          <div id="children" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
+            <span style="color: #999; font-size: 12px; grid-column: span 2;">选择城市后显示下级地区</span>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>🔍 快速搜索</h3>
+          <input type="text" id="searchInput" placeholder="搜索地标..."
+                 style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 13px;"
+                 onkeypress="if(event.key==='Enter') doSearch()">
+          <div id="searchResults" style="margin-top: 8px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const API_BASE = 'http://100.64.0.131:3000/api/v1';
+    let map = null;
+    let currentMarker = null;
+    let currentLayer = null;
+    const layers = {};
+
+    // 状态更新
+    function setStatus(message, type = 'info') {
+      const statusDiv = document.getElementById('status');
+      const statusText = document.getElementById('statusText');
+      statusDiv.className = 'status-' + type;
+      statusText.textContent = message;
+    }
+
+    // 初始化地图
+    function initMap() {
+      try {
+        setStatus('⏳ 正在创建地图...', 'info');
+
+        map = L.map('map', {
+          center: [35.8617, 104.1954],
+          zoom: 4,
+          zoomControl: true
+        });
+
+        // OpenStreetMap 标准图层
+        layers.osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '© OpenStreetMap'
+        });
+
+        // OpenStreetMap 热点图
+        layers.osm_hot = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '© OpenStreetMap, Hot'
+        });
+
+        // OpenStreetMap 地形图
+        layers.osm_topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+          maxZoom: 17,
+          attribution: '© OpenStreetMap, OpenTopoMap'
+        });
+
+        // 暗色模式
+        layers.dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+          maxZoom: 19,
+          attribution: '© CartoDB'
+        });
+
+        // 默认使用标准OSM
+        currentLayer = layers.osm;
+        currentLayer.addTo(map);
+
+        setStatus('✅ 地图初始化成功！', 'success');
+        return true;
+      } catch (error) {
+        setStatus('❌ 地图初始化失败: ' + error.message, 'error');
+        return false;
+      }
+    }
+
+    // 切换图层
+    function switchLayer(layerType) {
+      try {
+        if (layers[layerType] && currentLayer !== layers[layerType]) {
+          map.removeLayer(currentLayer);
+          currentLayer = layers[layerType];
+          currentLayer.addTo(map);
+
+          // 更新按钮状态
+          document.querySelectorAll('.layer-btn').forEach(btn => btn.classList.remove('active'));
+          event.target.classList.add('active');
+
+          const names = { osm: '标准街道', osm_hot: '热点图', osm_topo: '地形图', dark: '暗色模式' };
+          setStatus(`✅ 已切换到 ${names[layerType]}`, 'success');
+        }
+      } catch (error) {
+        setStatus('❌ 切换失败', 'error');
+      }
+    }
+
+    // 前往城市/地区
+    async function goToCity(regionId, regionName) {
+      try {
+        setStatus(`⏳ 正在前往 ${regionName}...`, 'info');
+
+        const response = await fetch(`${API_BASE}/map/view?region_id=${regionId}`);
+        const data = await response.json();
+
+        if (data.success && data.view) {
+          const { center, zoom } = data.view;
+
+          map.flyTo([center.lat, center.lng], zoom, { duration: 1.5 });
+
+          if (currentMarker) map.removeLayer(currentMarker);
+          currentMarker = L.marker([center.lat, center.lng]).addTo(map)
+            .bindPopup(`<b>${regionName}</b><br>纬度: ${center.lat.toFixed(4)}<br>经度: ${center.lng.toFixed(4)}`)
+            .openPopup();
+
+          updateInfo(regionName, center, zoom);
+          updateBreadcrumb(regionId);
+          loadChildren(regionId);
+
+          setStatus(`✅ 已到达 ${regionName}`, 'success');
+        }
+      } catch (error) {
+        setStatus('❌ 切换失败: ' + error.message, 'error');
+      }
+    }
+
+    // 更新信息显示
+    function updateInfo(name, center, zoom) {
+      document.getElementById('info').innerHTML =
+        `<b style="font-size: 15px;">${name}</b><br>` +
+        `<span style="color: #666;">纬度: ${center.lat.toFixed(4)}°</span><br>` +
+        `<span style="color: #666;">经度: ${center.lng.toFixed(4)}°</span><br>` +
+        `<span style="color: #666;">缩放: ${zoom}</span>`;
+    }
+
+    // 更新面包屑
+    async function updateBreadcrumb(regionId) {
+      try {
+        const response = await fetch(`${API_BASE}/map/regions/${regionId}/path`);
+        const data = await response.json();
+
+        const breadcrumbDiv = document.getElementById('breadcrumb');
+        if (data.success && data.path) {
+          breadcrumbDiv.innerHTML = data.path.map((p, i) =>
+            `<span class="breadcrumb-item" onclick="goToCity('${p.id}', '${p.name}')">${p.name}</span>`
+          ).join('<span style="color:#999;"> › </span>');
+        }
+      } catch (error) {
+        console.error('更新面包屑失败:', error);
+      }
+    }
+
+    // 加载子地区
+    async function loadChildren(parentId) {
+      try {
+        const response = await fetch(`${API_BASE}/map/regions/${parentId}/children`);
+        const data = await response.json();
+
+        const childrenDiv = document.getElementById('children');
+        if (data.success && data.children.length > 0) {
+          childrenDiv.innerHTML = data.children.map(child => `
+            <button class="city-btn" onclick="goToCity('${child.id}', '${child.name}')" style="font-size: 12px; padding: 8px;">
+              ${child.name}
+            </button>
+          `).join('');
+        } else {
+          childrenDiv.innerHTML = '<span style="color: #999; font-size: 12px; grid-column: span 2;">没有下级地区</span>';
+        }
+      } catch (error) {
+        console.error('加载子地区失败:', error);
+      }
+    }
+
+    // 搜索功能
+    async function doSearch() {
+      const query = document.getElementById('searchInput').value.trim();
+      if (!query) return;
+
+      try {
+        setStatus(`⏳ 正在搜索 "${query}"...`, 'info');
+
+        const response = await fetch(`${API_BASE}/map/search?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+
+        const resultsDiv = document.getElementById('searchResults');
+        if (data.success && data.results.length > 0) {
+          resultsDiv.innerHTML = data.results.map(r => `
+            <button class="city-btn" onclick="goToCity('${r.id}', '${r.name}')" style="font-size: 12px; padding: 8px;">
+              ${r.name}
+            </button>
+          `).join('');
+          setStatus(`✅ 找到 ${data.count} 个结果`, 'success');
+        } else {
+          resultsDiv.innerHTML = '<span style="color: #999; font-size: 12px;">未找到结果</span>';
+          setStatus('❌ 未找到匹配结果', 'info');
+        }
+      } catch (error) {
+        setStatus('❌ 搜索失败', 'error');
+      }
+    }
+
+    // 页面加载
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        if (initMap()) {
+          // 预加载城市数据
+          fetch(`${API_BASE}/map/cities`).catch(e => console.error('预加载失败:', e));
+        }
+      }, 100);
+    });
+  </script>
+</body>
+</html>

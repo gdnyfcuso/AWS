@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>地区选择器 API 测试</title>
+  <style>
+    body {
+      font-family: system-ui;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .test-section {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .test-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 15px;
+      color: #111827;
+    }
+    .status {
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+    .status.success {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .status.error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    .status.info {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+    .city-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 10px;
+      margin-top: 15px;
+    }
+    .city-btn {
+      padding: 12px;
+      border: 2px solid #e5e7eb;
+      border-radius: 8px;
+      background: white;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+    .city-btn:hover {
+      border-color: #3b82f6;
+      background: #eff6ff;
+    }
+    .city-btn.selected {
+      border-color: #3b82f6;
+      background: #dbeafe;
+    }
+    .city-name {
+      font-weight: 500;
+      color: #111827;
+    }
+    .city-name-en {
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 2px;
+    }
+    .landmarks-list {
+      margin-top: 15px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .landmark-item {
+      padding: 8px;
+      border-left: 3px solid #3b82f6;
+      background: #f8fafc;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <h1 style="text-align: center; margin-bottom: 30px;">🗺️ 地图-3D 联动系统测试</h1>
+
+  <div class="test-section">
+    <div class="test-title">1. 城市列表 API 测试</div>
+    <div id="cities-status" class="status info">加载中...</div>
+    <div id="cities-grid" class="city-grid"></div>
+  </div>
+
+  <div class="test-section">
+    <div class="test-title">2. 地标建筑 API 测试</div>
+    <div id="landmarks-status" class="status info">请先选择一个城市</div>
+    <div id="landmarks-list"></div>
+  </div>
+
+  <div class="test-section">
+    <div class="test-title">3. API 响应时间测试</div>
+    <div id="response-time" class="status info">点击城市按钮进行测试</div>
+  </div>
+
+  <script>
+    const API_BASE = 'http://100.64.0.131:3000/api/v1';
+    let selectedCity = null;
+
+    // 测试城市列表 API
+    async function testCitiesAPI() {
+      const statusEl = document.getElementById('cities-status');
+      const gridEl = document.getElementById('cities-grid');
+
+      try {
+        const start = performance.now();
+        const response = await fetch(`${API_BASE}/map/cities`);
+        const duration = performance.now() - start;
+        const data = await response.json();
+
+        if (data.success && data.cities) {
+          statusEl.className = 'status success';
+          statusEl.textContent = `✅ 成功获取 ${data.cities.length} 个城市 (响应时间: ${duration.toFixed(0)}ms)`;
+
+          gridEl.innerHTML = data.cities.map(city => `
+            <button class="city-btn" data-city-id="${city.id}" onclick="selectCity('${city.id}', '${city.name}')">
+              <div class="city-name">${city.name}</div>
+              <div class="city-name-en">${city.name_en}</div>
+            </button>
+          `).join('');
+        } else {
+          throw new Error('Invalid response format');
+        }
+      } catch (error) {
+        statusEl.className = 'status error';
+        statusEl.textContent = `❌ 加载失败: ${error.message}`;
+        console.error('Cities API error:', error);
+      }
+    }
+
+    // 选择城市并加载地标
+    async function selectCity(cityId, cityName) {
+      selectedCity = cityId;
+
+      // 更新选中状态
+      document.querySelectorAll('.city-btn').forEach(btn => {
+        btn.classList.remove('selected');
+        if (btn.dataset.cityId === cityId) {
+          btn.classList.add('selected');
+        }
+      });
+
+      const statusEl = document.getElementById('landmarks-status');
+      const listEl = document.getElementById('landmarks-list');
+      const timeEl = document.getElementById('response-time');
+
+      statusEl.className = 'status info';
+      statusEl.textContent = `加载 ${cityName} 的地标...`;
+      listEl.innerHTML = '<div class="loading">加载中...</div>';
+
+      try {
+        const start = performance.now();
+        const response = await fetch(`${API_BASE}/map/regions/${cityId}/landmarks`);
+        const duration = performance.now() - start;
+        const data = await response.json();
+
+        if (data.success) {
+          statusEl.className = 'status success';
+          statusEl.textContent = `✅ ${cityName} 有 ${data.landmarks.length} 个地标 (响应时间: ${duration.toFixed(0)}ms)`;
+
+          if (data.landmarks.length > 0) {
+            listEl.innerHTML = data.landmarks.map(lm => `
+              <div class="landmark-item">
+                <strong>${lm.name}</strong>
+                <div style="font-size: 11px; color: #6b7280; margin-top: 4px;">
+                  位置: (${lm.x.toFixed(1)}, ${lm.y.toFixed(1)}, ${lm.z.toFixed(1)}) |
+                  尺寸: ${lm.width.toFixed(1)}×${lm.depth.toFixed(1)}×${lm.height.toFixed(1)}m |
+                  颜色: <span style="display: inline-block; width: 12px; height: 12px; background: ${lm.color}; border-radius: 2px; vertical-align: middle;"></span>
+                </div>
+                ${lm.description ? `<div style="font-size: 11px; color: #9ca3af;">${lm.description}</div>` : ''}
+              </div>
+            `).join('');
+          } else {
+            listEl.innerHTML = '<div style="text-align: center; padding: 20px; color: #6b7280;">该城市暂无地标数据</div>';
+          }
+
+          timeEl.className = 'status success';
+          timeEl.textContent = `✅ ${cityName} 响应时间: ${duration.toFixed(0)}ms`;
+
+          console.log(`${cityName} landmarks:`, data.landmarks);
+        } else {
+          throw new Error(data.error || 'Invalid response');
+        }
+      } catch (error) {
+        statusEl.className = 'status error';
+        statusEl.textContent = `❌ 加载失败: ${error.message}`;
+        listEl.innerHTML = '';
+        console.error('Landmarks API error:', error);
+      }
+    }
+
+    // 页面加载时测试城市 API
+    document.addEventListener('DOMContentLoaded', () => {
+      testCitiesAPI();
+    });
+  </script>
+</body>
+</html>

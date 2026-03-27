@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>地图调试</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; padding: 20px; background: #f0f0f0; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { margin-bottom: 20px; }
+    #status { background: white; padding: 15px; margin-bottom: 15px; border-radius: 8px; }
+    .success { color: green; }
+    .error { color: red; }
+    #map { width: 100%; height: 400px; border-radius: 8px; margin-bottom: 15px; }
+    #cities { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 15px; }
+    .city-btn { padding: 10px; background: #3b82f6; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    .city-btn:hover { background: #2563eb; }
+    #info { background: white; padding: 15px; border-radius: 8px; }
+    pre { background: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto; }
+  </style>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>🗺️ 地图调试页面</h1>
+
+    <div id="status">
+      <div>正在初始化...</div>
+    </div>
+
+    <div id="map"></div>
+
+    <div id="cities">
+      <button class="city-btn" onclick="goToCity('beijing', '北京')">北京</button>
+      <button class="city-btn" onclick="goToCity('shanghai', '上海')">上海</button>
+      <button class="city-btn" onclick="goToCity('guangzhou', '广州')">广州</button>
+      <button class="city-btn" onclick="goToCity('shenzhen', '深圳')">深圳</button>
+      <button class="city-btn" onclick="goToCity('hangzhou', '杭州')">杭州</button>
+      <button class="city-btn" onclick="goToCity('chengdu', '成都')">成都</button>
+      <button class="city-btn" onclick="goToCity('xian', '西安')">西安</button>
+    </div>
+
+    <div id="info">
+      <h3>当前信息</h3>
+      <pre id="infoText">选择一个城市...</pre>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const API_BASE = 'http://100.64.0.131:3000/api/v1';
+    let map = null;
+    let currentMarker = null;
+
+    function log(message, isSuccess = true) {
+      const statusDiv = document.getElementById('status');
+      const color = isSuccess ? 'green' : 'red';
+      statusDiv.innerHTML = `<div style="color: ${color}">${message}</div>`;
+      console.log(message);
+    }
+
+    function initMap() {
+      try {
+        log('正在创建地图...', true);
+        console.log('开始初始化地图');
+
+        // 创建地图
+        map = L.map('map').setView([35.8617, 104.1954], 4);
+        console.log('地图对象创建成功:', map);
+
+        // 添加天地图图层
+        const vecLayer = L.tileLayer('https://t0.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}', {
+          attribution: '天地图',
+          maxZoom: 18
+        });
+
+        const cvaLayer = L.tileLayer('https://t0.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}', {
+          attribution: '天地图',
+          maxZoom: 18
+        });
+
+        vecLayer.addTo(map);
+        cvaLayer.addTo(map);
+        console.log('地图图层添加成功');
+
+        log('✅ 地图初始化成功！', true);
+        return true;
+      } catch (error) {
+        log('❌ 地图初始化失败: ' + error.message, false);
+        console.error('地图初始化错误:', error);
+        return false;
+      }
+    }
+
+    async function testAPI() {
+      try {
+        log('正在测试API连接...');
+        const response = await fetch(`${API_BASE}/map/cities`);
+        const data = await response.json();
+
+        if (data.success) {
+          log(`✅ API连接成功！找到 ${data.cities.length} 个城市`, true);
+          return true;
+        } else {
+          log('❌ API返回错误: ' + (data.error || '未知错误'), false);
+          return false;
+        }
+      } catch (error) {
+        log('❌ API连接失败: ' + error.message, false);
+        console.error('API错误:', error);
+        return false;
+      }
+    }
+
+    async function goToCity(cityId, cityName) {
+      try {
+        log(`正在前往 ${cityName}...`);
+
+        const response = await fetch(`${API_BASE}/map/view?region_id=${cityId}`);
+        const data = await response.json();
+
+        if (data.success && data.view) {
+          const { center, zoom } = data.view;
+
+          // 移动地图
+          map.flyTo([center.lat, center.lng], zoom, {
+            duration: 1.5
+          });
+
+          // 添加标记
+          if (currentMarker) {
+            map.removeLayer(currentMarker);
+          }
+          currentMarker = L.marker([center.lat, center.lng]).addTo(map)
+            .bindPopup(`<b>${cityName}</b><br>纬度: ${center.lat.toFixed(4)}<br>经度: ${center.lng.toFixed(4)}`)
+            .openPopup();
+
+          document.getElementById('infoText').textContent =
+            `城市: ${cityName}\n纬度: ${center.lat.toFixed(4)}\n经度: ${center.lng.toFixed(4)}\n缩放: ${zoom}`;
+
+          log(`✅ 已到达 ${cityName}`, true);
+        } else {
+          log('❌ 获取地图视图失败', false);
+        }
+      } catch (error) {
+        log('❌ 切换城市失败: ' + error.message, false);
+        console.error('切换城市错误:', error);
+      }
+    }
+
+    // 页面加载完成后执行
+    window.addEventListener('DOMContentLoaded', async () => {
+      console.log('DOM已加载');
+
+      // 等待一小段时间确保容器准备好
+      setTimeout(() => {
+        console.log('开始初始化');
+        const mapOk = initMap();
+        if (mapOk) {
+          // 测试API
+          setTimeout(() => {
+            testAPI();
+          }, 500);
+        }
+      }, 100);
+    });
+  </script>
+</body>
+</html>

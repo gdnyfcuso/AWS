@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>真实地图与3D虚拟空间联动系统</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+    #three-container { width: 100%; height: 100%; border-radius: 8px; overflow: hidden; }
+    .sync-indicator { animation: pulse 1s ease-in-out infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .city-btn.active { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important; transform: scale(1.05); }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-purple-50 to-blue-50">
+  <!-- 顶部控制栏 -->
+  <div class="bg-white shadow-lg p-4 flex items-center justify-between">
+    <div class="flex items-center gap-4">
+      <h1 class="text-2xl font-bold text-gray-800">🗺️ 真实地图 + 3D虚拟空间 联动系统</h1>
+      <div id="region-indicator" class="hidden items-center gap-2 bg-purple-100 px-4 py-2 rounded-lg">
+        <span id="region-name" class="font-medium text-purple-700"></span>
+        <span id="sync-status" class="text-purple-500 text-sm"></span>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <button onclick="switchView('split')" class="view-btn active px-4 py-2 rounded-lg font-medium bg-purple-600 text-white">🔄 分屏</button>
+      <button onclick="switchView('map')" class="view-btn px-4 py-2 rounded-lg font-medium bg-gray-200 text-gray-700">🗺️ 地图</button>
+      <button onclick="switchView('3d')" class="view-btn px-4 py-2 rounded-lg font-medium bg-gray-200 text-gray-700">🎮 3D</button>
+    </div>
+  </div>
+
+  <!-- 主内容区 -->
+  <div id="main-content" class="flex" style="height: calc(100vh - 72px);">
+    <!-- 左侧：真实地图 -->
+    <div id="map-panel" class="w-1/2 p-4">
+      <div class="bg-white rounded-xl shadow-lg p-4 h-full flex flex-col">
+        <h2 class="text-lg font-semibold mb-4 text-gray-700">🗺️ 真实世界地图 (Leaflet)</h2>
+        <div id="real-map" class="flex-1 rounded-lg border-2 border-gray-200"></div>
+
+        <!-- 城市选择 -->
+        <div class="mt-4">
+          <h3 class="text-sm font-medium text-gray-600 mb-2">快速切换城市</h3>
+          <div id="city-buttons" class="grid grid-cols-4 gap-2"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右侧：3D虚拟空间 -->
+    <div id="3d-panel" class="w-1/2 p-4">
+      <div class="bg-white rounded-xl shadow-lg p-4 h-full flex flex-col">
+        <h2 class="text-lg font-semibold mb-4 text-gray-700">🏗️ 3D虚拟空间 (Three.js)</h2>
+        <div id="three-container" class="flex-1 rounded-lg border-2 border-gray-200 bg-gradient-to-b from-sky-300 to-sky-100"></div>
+
+        <!-- 3D信息 -->
+        <div id="3d-info" class="mt-4 text-sm text-gray-600">
+          <p><strong>当前区域:</strong> <span id="3d-region">加载中...</span></p>
+          <p><strong>建筑数量:</strong> <span id="3d-buildings">0</span> 个</p>
+          <p><strong>相机位置:</strong> <span id="3d-camera">0, 0, 0</span></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+  <script>
+    const API_BASE = 'http://100.64.0.131:3000/api/v1';
+    let realMap = null;
+    let scene, camera, renderer, controls;
+    let buildings = [];
+    let currentRegionId = 'china';
+
+    // 城市配置（真实坐标 + 3D虚拟坐标）
+    const CITIES = {
+      china: { name: '中国全图', center: [35.8617, 104.1954], zoom: 4, camPos: { x: 500, y: 400, z: 500 } },
+      beijing: { name: '北京市', center: [39.9042, 116.4074], zoom: 11, camPos: { x: 300, y: 250, z: 300 } },
+      shanghai: { name: '上海市', center: [31.2304, 121.4737], zoom: 11, camPos: { x: 300, y: 250, z: 300 } },
+      guangzhou: { name: '广州市', center: [23.1291, 113.2644], zoom: 11, camPos: { x: 300, y: 250, z: 300 } },
+      shenzhen: { name: '深圳市', center: [22.5431, 114.0579], zoom: 11, camPos: { x: 300, y: 250, z: 300 } },
+      hangzhou: { name: '杭州市', center: [30.2741, 120.1551], zoom: 11, camPos: { x: 300, y: 250, z: 300 } },
+      chengdu: { name: '成都市', center: [30.5728, 104.0668], zoom: 11, camPos: { x: 300, y: 250, z: 300 } },
+      xian: { name: '西安市', center: [34.3416, 108.9398], zoom: 11, camPos: { x: 300, y: 250, z: 300 } },
+    };
+
+    // 每个城市的3D建筑配置
+    const CITY_BUILDINGS = {
+      china: [],
+      beijing: [
+        { name: '天安门', x: 0, y: 25, z: 0, w: 60, d: 40, h: 30, color: 0xef4444 },
+        { name: '故宫', x: 0, y: 20, z: 80, w: 100, d: 80, h: 25, color: 0xf59e0b },
+        { name: 'CBD', x: 150, y: 50, z: 0, w: 120, d: 100, h: 80, color: 0x3b82f6 },
+        { name: '奥林匹克公园', x: 150, y: 30, z: -100, w: 150, d: 150, h: 20, color: 0x22c55e },
+      ],
+      shanghai: [
+        { name: '陆家嘴', x: 100, y: 80, z: 0, w: 80, d: 60, h: 120, color: 0x8b5cf6 },
+        { name: '外滩', x: 50, y: 20, z: 50, w: 100, d: 30, h: 25, color: 0xf59e0b },
+        { name: '南京路', x: 0, y: 15, z: 0, w: 80, d: 150, h: 20, color: 0xec4899 },
+      ],
+      guangzhou: [
+        { name: '广州塔', x: 100, y: 100, z: 0, w: 30, d: 30, h: 150, color: 0xef4444 },
+        { name: '珠江新城', x: 50, y: 60, z: 50, w: 100, d: 100, h: 80, color: 0x3b82f6 },
+        { name: '北京路', x: -50, y: 15, z: 0, w: 60, d: 120, h: 20, color: 0xf59e0b },
+      ],
+      shenzhen: [
+        { name: '平安大厦', x: 0, y: 80, z: 0, w: 50, d: 50, h: 120, color: 0x3b82f6 },
+        { name: '市民中心', x: 100, y: 40, z: 50, w: 120, d: 100, h: 30, color: 0x06b6d4 },
+        { name: '高新园', x: -100, y: 50, z: -50, w: 150, d: 100, h: 60, color: 0x8b5cf6 },
+      ],
+      hangzhou: [
+        { name: '西湖', x: 0, y: 10, z: 0, w: 200, d: 150, h: 10, color: 0x06b6d4 },
+        { name: '阿里园区', x: 150, y: 40, z: -100, w: 100, d: 80, h: 50, color: 0xf97316 },
+      ],
+      chengdu: [
+        { name: '春熙路', x: 0, y: 15, z: 0, w: 80, d: 100, h: 25, color: 0xec4899 },
+        { name: '天府广场', x: 50, y: 20, z: 50, w: 100, d: 100, h: 15, color: 0xf59e0b },
+        { name: '杜甫草堂', x: -100, y: 10, z: 50, w: 120, d: 80, h: 12, color: 0x22c55e },
+      ],
+      xian: [
+        { name: '钟楼', x: 0, y: 30, z: 0, w: 40, d: 40, h: 35, color: 0xf59e0b },
+        { name: '大雁塔', x: 80, y: 50, z: 100, w: 40, d: 40, h: 60, color: 0xef4444 },
+        { name: '明城墙', x: -50, y: 15, z: -50, w: 150, d: 100, h: 12, color: 0x9ca3af },
+      ],
+    };
+
+    // 初始化真实地图
+    function initRealMap() {
+      realMap = L.map('real-map').setView([35.8617, 104.1954], 4);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+      }).addTo(realMap);
+    }
+
+    // 初始化3D场景
+    function init3DScene() {
+      const container = document.getElementById('three-container');
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+
+      // 场景
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x87CEEB);
+
+      // 相机
+      camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 2000);
+      camera.position.set(500, 400, 500);
+
+      // 渲染器
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(width, height);
+      renderer.shadowMap.enabled = true;
+      container.appendChild(renderer.domElement);
+
+      // 控制器
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+
+      // 灯光
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+      scene.add(ambientLight);
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(100, 200, 100);
+      scene.add(directionalLight);
+
+      // 地面
+      const groundGeo = new THREE.PlaneGeometry(2000, 2000);
+      const groundMat = new THREE.MeshStandardMaterial({ color: 0x90EE90 });
+      const ground = new THREE.Mesh(groundGeo, groundMat);
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = 0;
+      scene.add(ground);
+
+      // 网格
+      const grid = new THREE.GridHelper(2000, 40, 0x888888);
+      scene.add(grid);
+
+      // 中国全图建筑
+      load3DBuildings('china');
+
+      // 动画
+      animate();
+
+      // 窗口大小调整
+      window.addEventListener('resize', () => {
+        const w = container.clientWidth;
+        const h = container.clientHeight;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      });
+    }
+
+    // 加载3D建筑
+    function load3DBuildings(cityId) {
+      // 清除旧建筑
+      buildings.forEach(b => scene.remove(b));
+      buildings = [];
+
+      const cityData = CITY_BUILDINGS[cityId] || [];
+      cityData.forEach(b => {
+        const geo = new THREE.BoxGeometry(b.w, b.h, b.d);
+        const mat = new THREE.MeshStandardMaterial({ color: b.color });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(b.x, b.y + b.h / 2, b.z);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        scene.add(mesh);
+        buildings.push(mesh);
+      });
+
+      // 更新信息
+      document.getElementById('3d-region').textContent = CITIES[cityId]?.name || cityId;
+      document.getElementById('3d-buildings').textContent = cityData.length;
+      updateCameraInfo();
+    }
+
+    // 更新相机信息
+    function updateCameraInfo() {
+      if (camera) {
+        document.getElementById('3d-camera').textContent =
+          `${Math.round(camera.position.x)}, ${Math.round(camera.position.y)}, ${Math.round(camera.position.z)}`;
+      }
+    }
+
+    // 动画循环
+    function animate() {
+      requestAnimationFrame(animate);
+      if (controls) controls.update();
+      if (renderer && scene && camera) {
+        renderer.render(scene, camera);
+      }
+      updateCameraInfo();
+    }
+
+    // 切换城市（联动核心功能）
+    async function switchCity(cityId) {
+      setSyncStatus(true);
+
+      const city = CITIES[cityId];
+      if (!city) return;
+
+      // 1. 更新真实地图
+      realMap.flyTo(city.center, city.zoom, { duration: 1.5 });
+
+      // 添加标记
+      L.marker(city.center)
+        .bindPopup(`<b>${city.name}</b>`)
+        .addTo(realMap);
+
+      // 2. 更新3D场景
+      load3DBuildings(cityId);
+
+      // 3. 平滑移动相机
+      const targetPos = city.camPos;
+      animateCameraTo(targetPos.x, targetPos.y, targetPos.z);
+
+      // 4. 更新UI
+      updateRegionIndicator(city.name);
+      updateActiveButton(cityId);
+
+      currentRegionId = cityId;
+
+      // 延迟重置同步状态
+      setTimeout(() => setSyncStatus(false), 1500);
+    }
+
+    // 相机动画
+    function animateCameraTo(x, y, z) {
+      const startPos = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+      const endPos = { x, y, z };
+      let progress = 0;
+
+      function animateStep() {
+        progress += 0.03;
+        if (progress >= 1) {
+          camera.position.set(x, y, z);
+          controls.target.set(0, 0, 0);
+          return;
+        }
+
+        camera.position.x = startPos.x + (endPos.x - startPos.x) * progress;
+        camera.position.y = startPos.y + (endPos.y - startPos.y) * progress;
+        camera.position.z = startPos.z + (endPos.z - startPos.z) * progress;
+        requestAnimationFrame(animateStep);
+      }
+      animateStep();
+    }
+
+    // 视图切换
+    function switchView(mode) {
+      const mapPanel = document.getElementById('map-panel');
+      const threePanel = document.getElementById('3d-panel');
+
+      // 重置所有按钮
+      document.querySelectorAll('.view-btn').forEach(btn => {
+        btn.className = 'view-btn px-4 py-2 rounded-lg font-medium bg-gray-200 text-gray-700';
+      });
+      event.target.className = 'view-btn active px-4 py-2 rounded-lg font-medium bg-purple-600 text-white';
+
+      // 切换面板显示
+      if (mode === 'map') {
+        mapPanel.classList.remove('hidden');
+        mapPanel.classList.add('w-full');
+        threePanel.classList.add('hidden');
+      } else if (mode === '3d') {
+        mapPanel.classList.add('hidden');
+        threePanel.classList.remove('hidden');
+        threePanel.classList.add('w-full');
+      } else {
+        mapPanel.classList.remove('hidden');
+        threePanel.classList.remove('hidden');
+        mapPanel.classList.remove('w-full');
+        threePanel.classList.remove('w-full');
+        mapPanel.classList.add('w-1/2');
+        threePanel.classList.add('w-1/2');
+      }
+    }
+
+    // 更新状态指示器
+    function updateRegionIndicator(name) {
+      document.getElementById('region-indicator').classList.remove('hidden');
+      document.getElementById('region-name').textContent = name;
+    }
+
+    function setSyncStatus(syncing) {
+      const statusEl = document.getElementById('sync-status');
+      if (syncing) {
+        statusEl.textContent = '同步中...';
+        statusEl.classList.add('sync-indicator');
+      } else {
+        statusEl.textContent = '已同步';
+        statusEl.classList.remove('sync-indicator');
+      }
+    }
+
+    function updateActiveButton(cityId) {
+      document.querySelectorAll('.city-btn').forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.dataset.city === cityId) {
+          btn.classList.add('active');
+        }
+      });
+    }
+
+    // 初始化城市按钮
+    function initCityButtons() {
+      const container = document.getElementById('city-buttons');
+      Object.entries(CITIES).forEach(([id, city]) => {
+        if (id !== 'china') {
+          const btn = document.createElement('button');
+          btn.className = 'city-btn px-3 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-lg hover:from-purple-600 hover:to-blue-600 transition-all text-sm font-medium';
+          btn.dataset.city = id;
+          btn.textContent = city.name;
+          btn.onclick = () => switchCity(id);
+          container.appendChild(btn);
+        }
+      });
+    }
+
+    // 页面加载完成后初始化
+    window.addEventListener('load', () => {
+      initRealMap();
+      init3DScene();
+      initCityButtons();
+
+      // 默认选择北京
+      setTimeout(() => switchCity('beijing'), 1000);
+    });
+  </script>
+</body>
+</html>

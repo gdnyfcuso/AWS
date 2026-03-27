@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>地图测试 - 地区切换</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    .city-btn {
+      transition: all 0.2s;
+    }
+    .city-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .city-btn.active {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <div class="container mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold text-center mb-2 text-gray-800">🌏 中国地图 - 地区切换测试</h1>
+    <p class="text-center text-gray-600 mb-8">点击城市按钮切换地图位置，体验国家-城市-区县-村庄层级切换</p>
+
+    <!-- 城市快速选择 -->
+    <div class="bg-white rounded-xl shadow-lg p-6 mb-6">
+      <h2 class="text-xl font-semibold mb-4 text-gray-700">🏙️ 快速切换城市</h2>
+      <div id="cityButtons" class="grid grid-cols-4 md:grid-cols-7 gap-3">
+        <!-- 城市按钮将通过JS动态生成 -->
+      </div>
+    </div>
+
+    <!-- 当前选择信息 -->
+    <div class="bg-white rounded-xl shadow-lg p-6 mb-6">
+      <h2 class="text-xl font-semibold mb-4 text-gray-700">📍 当前选择</h2>
+      <div id="currentInfo" class="flex items-center gap-4">
+        <div class="text-gray-500">请选择一个城市...</div>
+      </div>
+      <div id="breadcrumb" class="mt-3 text-sm text-gray-500 flex flex-wrap gap-2"></div>
+    </div>
+
+    <!-- 子地区选择 -->
+    <div id="childrenSection" class="bg-white rounded-xl shadow-lg p-6 mb-6 hidden">
+      <h2 class="text-xl font-semibold mb-4 text-gray-700">🏘️ 子地区</h2>
+      <div id="childrenButtons" class="grid grid-cols-3 md:grid-cols-5 gap-3">
+        <!-- 子地区按钮将通过JS动态生成 -->
+      </div>
+    </div>
+
+    <!-- 地图容器 -->
+    <div class="bg-white rounded-xl shadow-lg p-6">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-semibold text-gray-700">🗺️ 地图预览</h2>
+        <div class="flex gap-2">
+          <button onclick="zoomIn()" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">放大 +</button>
+          <button onclick="zoomOut()" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">缩小 -</button>
+        </div>
+      </div>
+      <div id="map" class="w-full h-96 rounded-lg border border-gray-200"></div>
+      <div class="mt-3 text-sm text-gray-500 text-center">
+        <span id="coords">等待选择地区...</span>
+      </div>
+    </div>
+
+    <!-- 测试日志 -->
+    <div class="bg-white rounded-xl shadow-lg p-6 mt-6">
+      <h2 class="text-xl font-semibold mb-4 text-gray-700">📋 操作日志</h2>
+      <div id="logs" class="h-48 overflow-y-auto bg-gray-50 rounded-lg p-3 font-mono text-sm">
+        <div class="text-gray-500">等待操作...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = 'http://100.64.0.131:3000/api/v1';
+    let map = null;
+    let currentMarker = null;
+
+    // 初始化地图
+    function initMap() {
+      map = L.map('map').setView([35.8617, 104.1954], 4);
+
+      L.tileLayer('https://t0.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}', {
+        attribution: '&copy; 天地图',
+        maxZoom: 18,
+      }).addTo(map);
+
+      L.tileLayer('https://t0.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}', {
+        attribution: '&copy; 天地图',
+        maxZoom: 18,
+      }).addTo(map);
+
+      log('地图初始化完成，中心：中国全图');
+    }
+
+    // 添加日志
+    function log(message) {
+      const logsDiv = document.getElementById('logs');
+      const time = new Date().toLocaleTimeString();
+      const logEntry = document.createElement('div');
+      logEntry.className = 'mb-1';
+      logEntry.innerHTML = `<span class="text-gray-400">[${time}]</span> ${message}`;
+      logsDiv.insertBefore(logEntry, logsDiv.firstChild);
+    }
+
+    // 更新坐标显示
+    function updateCoords(lat, lng) {
+      document.getElementById('coords').textContent = `纬度: ${lat.toFixed(4)}°, 经度: ${lng.toFixed(4)}°`;
+    }
+
+    // 加载城市列表
+    async function loadCities() {
+      try {
+        const response = await fetch(`${API_BASE}/map/cities`);
+        const data = await response.json();
+
+        if (data.success) {
+          const container = document.getElementById('cityButtons');
+          container.innerHTML = data.cities.map(city => `
+            <button
+              onclick="selectRegion('${city.id}', '${city.name}', '${city.type}')"
+              class="city-btn px-4 py-3 bg-gradient-to-br from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 rounded-lg text-center font-medium text-gray-700 border border-blue-200"
+              data-id="${city.id}"
+            >
+              <div class="text-lg">${city.name.replace('市', '')}</div>
+              <div class="text-xs text-gray-500">${city.name_en || ''}</div>
+            </button>
+          `).join('');
+
+          log(`已加载 ${data.cities.length} 个城市`);
+        }
+      } catch (error) {
+        log('❌ 加载城市失败: ' + error.message);
+      }
+    }
+
+    // 选择地区
+    async function selectRegion(regionId, regionName, regionType) {
+      try {
+        // 获取地图视图
+        const viewResponse = await fetch(`${API_BASE}/map/view?region_id=${regionId}`);
+        const viewData = await viewResponse.json();
+
+        if (viewData.success && viewData.view) {
+          const { center, zoom } = viewData.view;
+
+          // 移动地图
+          map.flyTo([center.lat, center.lng], zoom, {
+            duration: 1.5
+          });
+
+          // 更新标记
+          if (currentMarker) {
+            map.removeLayer(currentMarker);
+          }
+          currentMarker = L.marker([center.lat, center.lng]).addTo(map);
+          currentMarker.bindPopup(`<b>${regionName}</b><br>纬度: ${center.lat.toFixed(4)}<br>经度: ${center.lng.toFixed(4)}`).openPopup();
+
+          updateCoords(center.lat, center.lng);
+
+          // 更新当前信息
+          document.getElementById('currentInfo').innerHTML = `
+            <div class="text-2xl">📍</div>
+            <div>
+              <div class="text-xl font-bold text-gray-800">${regionName}</div>
+              <div class="text-sm text-gray-500">类型: ${getTypeName(regionType)}</div>
+            </div>
+          `;
+
+          // 更新面包屑
+          updateBreadcrumb(regionId);
+
+          log(`✅ 切换到: ${regionName} (${center.lat.toFixed(4)}, ${center.lng.toFixed(4)})`);
+
+          // 高亮按钮
+          document.querySelectorAll('.city-btn').forEach(btn => btn.classList.remove('active'));
+          const activeBtn = document.querySelector(`[data-id="${regionId}"]`);
+          if (activeBtn) activeBtn.classList.add('active');
+        }
+
+        // 加载子地区
+        await loadChildren(regionId);
+
+      } catch (error) {
+        log('❌ 选择地区失败: ' + error.message);
+      }
+    }
+
+    // 获取类型名称
+    function getTypeName(type) {
+      const names = {
+        country: '国家',
+        province: '省份',
+        city: '城市',
+        district: '区县',
+        village: '村庄/地标'
+      };
+      return names[type] || type;
+    }
+
+    // 更新面包屑
+    async function updateBreadcrumb(regionId) {
+      try {
+        const response = await fetch(`${API_BASE}/map/regions/${regionId}/path`);
+        const data = await response.json();
+
+        if (data.success) {
+          const breadcrumbDiv = document.getElementById('breadcrumb');
+          breadcrumbDiv.innerHTML = data.path.map((p, i) => `
+            <span class="px-2 py-1 bg-gray-100 rounded cursor-pointer hover:bg-gray-200"
+                  onclick="selectRegion('${p.id}', '${p.name}', '${p.type}')">
+              ${p.name}
+            </span>
+            ${i < data.path.length - 1 ? '<span class="text-gray-400">›</span>' : ''}
+          `).join('');
+        }
+      } catch (error) {
+        console.error('获取路径失败:', error);
+      }
+    }
+
+    // 加载子地区
+    async function loadChildren(regionId) {
+      try {
+        const response = await fetch(`${API_BASE}/map/regions/${regionId}/children`);
+        const data = await response.json();
+
+        const section = document.getElementById('childrenSection');
+        const container = document.getElementById('childrenButtons');
+
+        if (data.success && data.children.length > 0) {
+          section.classList.remove('hidden');
+          container.innerHTML = data.children.map(child => `
+            <button
+              onclick="selectRegion('${child.id}', '${child.name}', '${child.type}')"
+              class="px-3 py-2 bg-gradient-to-br from-green-50 to-green-100 hover:from-green-100 hover:to-green-200 rounded-lg text-center font-medium text-gray-700 border border-green-200 text-sm"
+            >
+              <div>${child.name}</div>
+              <div class="text-xs text-gray-500">${getTypeName(child.type)}</div>
+            </button>
+          `).join('');
+
+          log(`📍 找到 ${data.children.length} 个子地区`);
+        } else {
+          section.classList.add('hidden');
+          log('📍 该地区没有子地区');
+        }
+      } catch (error) {
+        console.error('加载子地区失败:', error);
+      }
+    }
+
+    // 地图控制
+    function zoomIn() {
+      map.zoomIn();
+      log('🔍 放大地图');
+    }
+
+    function zoomOut() {
+      map.zoomOut();
+      log('🔍 缩小地图');
+    }
+
+    // 页面加载完成后初始化
+    window.addEventListener('DOMContentLoaded', () => {
+      initMap();
+      loadCities();
+      log('🚀 页面加载完成，请选择一个城市开始');
+    });
+  </script>
+</body>
+</html>
