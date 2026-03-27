@@ -756,7 +756,7 @@ async function executeAction(
           event_type: 'social_event',
           data: {
             type: 'chat_initiated',
-            from_agent: { agent_id: agentId, name: req.agent?.agent_name || 'Unknown' },
+            from_agent: { agent_id: agentId, name: state.agent_name || 'Unknown' },
             message: parameters.message || '你好！',
           },
           agent_id: targetAgentId,
@@ -869,7 +869,7 @@ router.post(
         event_type: 'communication_event',
         data: {
           type: 'agent_communication',
-          from_agent: { agent_id: agent_id, name: req.agent?.agent_name || 'Unknown' },
+          from_agent: { agent_id: agent_id, name: req.agent!.agent_name },
           message: validated.message,
           target_agent: validated.target_agent_id || null,
           nearby_agents: nearbyAgentIds,
