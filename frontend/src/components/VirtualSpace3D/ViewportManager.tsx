@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { SceneLayer } from './layers/SceneLayer';
 import { PostProcessingLayer } from './layers/PostProcessingLayer';
 import { MacroView } from './views/MacroView';
+import { MicroView } from './views/MicroView';
 import { useCameraTransition } from '../../hooks/useCameraTransition';
 import { useViewState, ViewMode } from '../../stores/viewState';
 
@@ -12,6 +13,7 @@ export function ViewportManager() {
   const [camera, setCamera] = useState<THREE.Camera | null>(null);
   const [renderer, setRenderer] = useState<THREE.WebGLRenderer | null>(null);
   const [controls, setControls] = useState<OrbitControls | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const { currentMode, setViewMode } = useViewState();
 
   const { transitionCamera, isTransitioning } = useCameraTransition(camera, controls);
@@ -114,6 +116,16 @@ export function ViewportManager() {
 
           {currentMode === 'macro' && (
             <MacroView scene={scene} camera={camera} />
+          )}
+
+          {currentMode === 'micro' && (
+            <MicroView
+              scene={scene}
+              camera={camera}
+              renderer={renderer}
+              selectedAgentId={selectedAgentId}
+              onAgentClick={setSelectedAgentId}
+            />
           )}
         </>
       )}
