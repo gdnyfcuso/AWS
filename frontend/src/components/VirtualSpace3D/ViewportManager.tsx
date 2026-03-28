@@ -1,7 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { SceneLayer } from './layers/SceneLayer';
+import { PostProcessingLayer } from './layers/PostProcessingLayer';
+import { MacroView } from './views/MacroView';
 import { useCameraTransition } from '../../hooks/useCameraTransition';
 import { useViewState, ViewMode } from '../../stores/viewState';
 
@@ -23,7 +25,6 @@ export function ViewportManager() {
     setCamera(camera);
     setRenderer(renderer);
 
-    // 获取 OrbitControls
     const container = renderer.domElement.parentElement;
     if (container) {
       const controls = new OrbitControls(camera as THREE.PerspectiveCamera, renderer.domElement);
@@ -66,9 +67,56 @@ export function ViewportManager() {
     setupCameraForView(mode);
   }, [isTransitioning, setViewMode, setupCameraForView]);
 
+  // 渲染循环
+  useEffect(() => {
+    if (!scene || !camera || !renderer || !controls) return;
+
+    let animationFrameId: number;
+
+    const animate = () => {
+      animationFrameId = requestAnimationFrame(animate);
+
+      controls.update();
+
+      // 使用后处理 composer（如果存在）
+      const composer = (renderer as any).composer;
+      if (composer && currentMode === 'macro') {
+        composer.render();
+      } else {
+        renderer.render(scene, camera);
+      }
+    };
+
+    animate();
+
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [scene, camera, renderer, controls, currentMode]);
+
   return (
     <div className="relative w-full h-full">
       <SceneLayer onSceneReady={handleSceneReady} />
+
+      {scene && camera && renderer && (
+        <>
+          <PostProcessingLayer
+            scene={scene}
+            camera={camera}
+            renderer={renderer}
+            enabled={currentMode === 'macro'}
+            bloomStrength={0.3}
+            bloomRadius={0.5}
+            bloomThreshold={0.7}
+          />
+
+          {currentMode === 'macro' && (
+            <MacroView scene={scene} camera={camera} />
+          )}
+        </>
+      )}
 
       <div className="absolute top-4 right-4 flex gap-2 z-10">
         <button
