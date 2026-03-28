@@ -7,8 +7,17 @@ import { CinematicPostProcessing } from './layers/CinematicPostProcessing';
 import { MacroView } from './views/MacroView';
 import { MicroView } from './views/MicroView';
 import { NarrativeView } from './views/NarrativeView';
+import { EnvironmentRenderer } from './renderers/EnvironmentRenderer';
 import { useCameraTransition } from '../../hooks/useCameraTransition';
 import { useViewState, ViewMode } from '../../stores/viewState';
+
+function formatTime(hours: number): string {
+  const h = Math.floor(hours);
+  const m = Math.floor((hours % 1) * 60);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${m.toString().padStart(2, '0')} ${ampm}`;
+}
 
 export function ViewportManager() {
   const [scene, setScene] = useState<THREE.Scene | null>(null);
@@ -16,6 +25,7 @@ export function ViewportManager() {
   const [renderer, setRenderer] = useState<THREE.WebGLRenderer | null>(null);
   const [controls, setControls] = useState<OrbitControls | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [virtualTime, setVirtualTime] = useState(12); // 12:00 PM
   const { currentMode, setViewMode } = useViewState();
 
   const { transitionCamera, isTransitioning } = useCameraTransition(camera, controls);
@@ -109,6 +119,11 @@ export function ViewportManager() {
 
       {scene && camera && renderer && (
         <>
+          <EnvironmentRenderer
+            scene={scene}
+            virtualTime={virtualTime}
+          />
+
           <PostProcessingLayer
             scene={scene}
             camera={camera}
@@ -147,6 +162,21 @@ export function ViewportManager() {
           )}
         </>
       )}
+
+      {/* 时间控制 */}
+      <div className="absolute top-4 left-4 bg-black/70 text-white px-3 py-2 rounded z-10">
+        <div className="text-sm">虚拟时间</div>
+        <div className="text-lg font-mono">{formatTime(virtualTime)}</div>
+        <input
+          type="range"
+          min="0"
+          max="24"
+          step="0.1"
+          value={virtualTime}
+          onChange={(e) => setVirtualTime(parseFloat(e.target.value))}
+          className="w-32 mt-2"
+        />
+      </div>
 
       <div className="absolute top-4 right-4 flex gap-2 z-10">
         <button
