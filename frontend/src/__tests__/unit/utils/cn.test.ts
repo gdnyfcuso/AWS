@@ -56,8 +56,9 @@ describe('cn', () => {
     ).toBe('base-class conditional array-class-1 array-class-2 true-class');
   });
 
-  it('应该去重相同的类名', () => {
-    expect(cn('foo', 'bar', 'foo')).toBe('foo bar');
+  it('应该保留相同的非 Tailwind 类名 (clsx 行为)', () => {
+    // clsx + twMerge 不去重非 Tailwind 类名，这是预期行为
+    expect(cn('foo', 'bar', 'foo')).toBe('foo bar foo');
   });
 
   it('应该处理特殊字符和 Tailwind 变体', () => {

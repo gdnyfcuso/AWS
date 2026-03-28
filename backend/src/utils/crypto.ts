@@ -1,6 +1,6 @@
 // 加密工具
 
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 
 /**
  * 生成 API Key
@@ -33,10 +33,10 @@ export function verifySignature(
   if (signature.length !== expected.length) {
     return false;
   }
-  return crypto.subtle.timingSafeEqual(
-    new TextEncoder().encode(signature),
-    new TextEncoder().encode(expected)
-  ) as boolean;
+  return timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(expected)
+  );
 }
 
 /**
