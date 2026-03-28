@@ -3,8 +3,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { SceneLayer } from './layers/SceneLayer';
 import { PostProcessingLayer } from './layers/PostProcessingLayer';
+import { CinematicPostProcessing } from './layers/CinematicPostProcessing';
 import { MacroView } from './views/MacroView';
 import { MicroView } from './views/MicroView';
+import { NarrativeView } from './views/NarrativeView';
 import { useCameraTransition } from '../../hooks/useCameraTransition';
 import { useViewState, ViewMode } from '../../stores/viewState';
 
@@ -77,13 +79,16 @@ export function ViewportManager() {
 
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
-
       controls.update();
 
-      // 使用后处理 composer（如果存在）
-      const composer = (renderer as any).composer;
-      if (composer && currentMode === 'macro') {
-        composer.render();
+      // 根据模式选择渲染方式
+      const cinematicComposer = (renderer as any).cinematicComposer;
+      const macroComposer = (renderer as any).composer;
+
+      if (currentMode === 'narrative' && cinematicComposer) {
+        cinematicComposer.render();
+      } else if (currentMode === 'macro' && macroComposer) {
+        macroComposer.render();
       } else {
         renderer.render(scene, camera);
       }
@@ -114,6 +119,15 @@ export function ViewportManager() {
             bloomThreshold={0.7}
           />
 
+          <CinematicPostProcessing
+            scene={scene}
+            camera={camera}
+            renderer={renderer}
+            enabled={currentMode === 'narrative'}
+            focusDistance={10}
+            bokehAperture={0.0001}
+          />
+
           {currentMode === 'macro' && (
             <MacroView scene={scene} camera={camera} />
           )}
@@ -126,6 +140,10 @@ export function ViewportManager() {
               selectedAgentId={selectedAgentId}
               onAgentClick={setSelectedAgentId}
             />
+          )}
+
+          {currentMode === 'narrative' && (
+            <NarrativeView scene={scene} camera={camera} />
           )}
         </>
       )}
