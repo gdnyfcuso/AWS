@@ -839,14 +839,32 @@ export function VirtualSpace3D({
 
     const group = agentMeshesRef.current;
 
-    // 清除旧的 Agent
+    // 保存当前选中 Agent 的位置和旋转（保留键盘控制的状态）
+    const selectedAgentId = currentSelectedAgentRef.current;
+    const savedAgentState = new Map<string, { position: THREE.Vector3; rotation: number }>();
+
     while (group.children.length > 0) {
       const child = group.children[0];
       if (child.userData.agentId) {
-        // 清除该 Agent 的相关数据
-        agentRotationsRef.current.delete(child.userData.agentId);
-        agentPhysicsRef.current.delete(child.userData.agentId);
-        agentTargetPositionsRef.current.delete(child.userData.agentId);
+        const agentId = child.userData.agentId;
+        // 如果是选中的 Agent，保存其当前状态
+        if (agentId === selectedAgentId) {
+          savedAgentState.set(agentId, {
+            position: child.position.clone(),
+            rotation: child.rotation.y
+          });
+          // 保留旋转角度引用
+          if (agentRotationsRef.current.has(agentId)) {
+            // 不删除，保留状态
+          } else {
+            agentRotationsRef.current.delete(agentId);
+          }
+        } else {
+          // 非选中 Agent，清除其相关数据
+          agentRotationsRef.current.delete(agentId);
+          agentPhysicsRef.current.delete(agentId);
+          agentTargetPositionsRef.current.delete(agentId);
+        }
       }
       if (child instanceof THREE.Group) {
         child.clear();
@@ -857,8 +875,17 @@ export function VirtualSpace3D({
     // 添加新的 Agent - 动漫 Q 版风格
     agents.forEach(agent => {
       const agentGroup = new THREE.Group();
-      // Q 版 Agent 直接放在地面上（y = agent.y）
-      agentGroup.position.set(agent.x, agent.y, agent.z);
+
+      // 如果是选中的 Agent 且有保存的状态，使用保存的位置（键盘控制的位置）
+      const savedState = savedAgentState.get(agent.agent_id);
+      if (savedState) {
+        agentGroup.position.copy(savedState.position);
+        agentGroup.rotation.y = savedState.rotation;
+        console.log(`[AgentUpdate] Keeping keyboard position for ${agent.agent_id}:`, savedState.position);
+      } else {
+        // Q 版 Agent 直接放在地面上（y = agent.y）
+        agentGroup.position.set(agent.x, agent.y, agent.z);
+      }
 
       const moodColor = moodColors[agent.mood] || '#6b7280';
       const skinColor = 0xffe0c0; // 更嫩的肤色
@@ -1206,8 +1233,18 @@ export function VirtualSpace3D({
       };
 
       // 初始化目标位置和旋转角度
-      agentTargetPositionsRef.current.set(agent.agent_id, { x: agent.x, y: agent.y, z: agent.z });
-      agentRotationsRef.current.set(agent.agent_id, agentGroup.rotation.y);
+      // 如果是选中的 Agent，使用保存的状态（键盘控制的位置）
+      if (savedState) {
+        agentTargetPositionsRef.current.set(agent.agent_id, {
+          x: savedState.position.x,
+          y: savedState.position.y,
+          z: savedState.position.z
+        });
+        agentRotationsRef.current.set(agent.agent_id, savedState.rotation);
+      } else {
+        agentTargetPositionsRef.current.set(agent.agent_id, { x: agent.x, y: agent.y, z: agent.z });
+        agentRotationsRef.current.set(agent.agent_id, agentGroup.rotation.y);
+      }
       console.log(`[Agent Created] ${agent.agent_id}, rotation: ${agentGroup.rotation.y}, position: (${agent.x}, ${agent.y}, ${agent.z})`);
 
       group.add(agentGroup);
