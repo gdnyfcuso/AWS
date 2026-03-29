@@ -6,7 +6,6 @@
 import { createLogger } from '../../utils/logger';
 import { cityTerrainSystem } from '../../core/CityTerrainSystem';
 import { getAllCities, getCityConfig } from '../../config/cities';
-import { mapCoordinateSystem } from '../../core/MapCoordinateSystem';
 
 const logger = createLogger('CityTerrainAPI');
 
@@ -83,57 +82,17 @@ export async function getTerrainByAgent(req: any, res: any) {
 
     const terrainData = await cityTerrainSystem.getTerrainByAgentId(agentId);
 
-    // 获取城市配置以计算中心点偏移
-    const city = terrainData.city ? getCityConfig(terrainData.city.id) : null;
-    let centerOffset = { x: 0, z: 0 };
-
-    if (city && city.center) {
-      // 计算城市中心在虚拟坐标系中的位置
-      centerOffset = mapCoordinateSystem.realToVirtual(city.center.lat, city.center.lng);
-    }
-
-    // 居中地形特征位置
-    const centerPosition = (pos: { x: number; y: number; z: number }) => ({
-      x: pos.x - centerOffset.x,
-      y: pos.y,
-      z: pos.z - centerOffset.z,
-    });
-
+    // 地形特征已经包含了正确的虚拟坐标（使用 virtual_center_x 和 virtual_center_z）
+    // 不需要再进行居中调整，直接返回原始坐标
     return res.json({
       success: true,
       data: {
         city: terrainData.city,
-        mountains: terrainData.mountains.map(f => ({
-          ...formatTerrainFeature(f),
-          position: centerPosition(f.position),
-        })),
-        hills: terrainData.hills.map(f => ({
-          ...formatTerrainFeature(f),
-          position: centerPosition(f.position),
-        })),
-        rivers: terrainData.rivers.map(f => {
-          const formatted = formatTerrainFeature(f);
-          // 对于河流，需要居中路径中的每个点
-          const metadata = formatted.metadata as any;
-          if (metadata?.path && Array.isArray(metadata.path)) {
-            metadata.path = metadata.path.map((p: any) => ({
-              x: p.x - centerOffset.x,
-              y: p.y,
-              z: p.z - centerOffset.z,
-            }));
-          }
-          // 同时居中河流的position
-          formatted.position = centerPosition(formatted.position);
-          return formatted;
-        }),
-        plains: terrainData.plains.map(f => ({
-          ...formatTerrainFeature(f),
-          position: centerPosition(f.position),
-        })),
-        waters: terrainData.waters.map(f => ({
-          ...formatTerrainFeature(f),
-          position: centerPosition(f.position),
-        })),
+        mountains: terrainData.mountains.map(f => formatTerrainFeature(f)),
+        hills: terrainData.hills.map(f => formatTerrainFeature(f)),
+        rivers: terrainData.rivers.map(f => formatTerrainFeature(f)),
+        plains: terrainData.plains.map(f => formatTerrainFeature(f)),
+        waters: terrainData.waters.map(f => formatTerrainFeature(f)),
       },
     });
   } catch (error) {
@@ -153,53 +112,17 @@ export async function getTerrainByCity(req: any, res: any) {
     const { cityId } = req.params;
     const terrainData = await cityTerrainSystem.getTerrainByCityName(cityId);
 
-    // 获取城市配置以计算中心点偏移
-    const city = terrainData.city ? getCityConfig(terrainData.city.id) : null;
-    let centerOffset = { x: 0, z: 0 };
-
-    if (city && city.center) {
-      centerOffset = mapCoordinateSystem.realToVirtual(city.center.lat, city.center.lng);
-    }
-
-    const centerPosition = (pos: { x: number; y: number; z: number }) => ({
-      x: pos.x - centerOffset.x,
-      y: pos.y,
-      z: pos.z - centerOffset.z,
-    });
-
+    // 地形特征已经包含了正确的虚拟坐标（使用 virtual_center_x 和 virtual_center_z）
+    // 不需要再进行居中调整，直接返回原始坐标
     return res.json({
       success: true,
       data: {
         city: terrainData.city,
-        mountains: terrainData.mountains.map(f => ({
-          ...formatTerrainFeature(f),
-          position: centerPosition(f.position),
-        })),
-        hills: terrainData.hills.map(f => ({
-          ...formatTerrainFeature(f),
-          position: centerPosition(f.position),
-        })),
-        rivers: terrainData.rivers.map(f => {
-          const formatted = formatTerrainFeature(f);
-          const metadata = formatted.metadata as any;
-          if (metadata?.path && Array.isArray(metadata.path)) {
-            metadata.path = metadata.path.map((p: any) => ({
-              x: p.x - centerOffset.x,
-              y: p.y,
-              z: p.z - centerOffset.z,
-            }));
-          }
-          formatted.position = centerPosition(formatted.position);
-          return formatted;
-        }),
-        plains: terrainData.plains.map(f => ({
-          ...formatTerrainFeature(f),
-          position: centerPosition(f.position),
-        })),
-        waters: terrainData.waters.map(f => ({
-          ...formatTerrainFeature(f),
-          position: centerPosition(f.position),
-        })),
+        mountains: terrainData.mountains.map(f => formatTerrainFeature(f)),
+        hills: terrainData.hills.map(f => formatTerrainFeature(f)),
+        rivers: terrainData.rivers.map(f => formatTerrainFeature(f)),
+        plains: terrainData.plains.map(f => formatTerrainFeature(f)),
+        waters: terrainData.waters.map(f => formatTerrainFeature(f)),
       },
     });
   } catch (error) {
@@ -293,53 +216,17 @@ export async function regenerateTerrain(req: any, res: any) {
 
     const terrainData = await cityTerrainSystem.regenerateTerrain(cityId);
 
-    // 获取城市配置以计算中心点偏移
-    const city = getCityConfig(cityId);
-    let centerOffset = { x: 0, z: 0 };
-
-    if (city && city.center) {
-      centerOffset = mapCoordinateSystem.realToVirtual(city.center.lat, city.center.lng);
-    }
-
-    const centerPosition = (pos: { x: number; y: number; z: number }) => ({
-      x: pos.x - centerOffset.x,
-      y: pos.y,
-      z: pos.z - centerOffset.z,
-    });
-
+    // 地形特征已经包含了正确的虚拟坐标（使用 virtual_center_x 和 virtual_center_z）
+    // 不需要再进行居中调整，直接返回原始坐标
     return res.json({
       success: true,
       data: {
         city: terrainData.city,
-        mountains: terrainData.mountains.map(f => ({
-          ...formatTerrainFeature(f),
-          position: centerPosition(f.position),
-        })),
-        hills: terrainData.hills.map(f => ({
-          ...formatTerrainFeature(f),
-          position: centerPosition(f.position),
-        })),
-        rivers: terrainData.rivers.map(f => {
-          const formatted = formatTerrainFeature(f);
-          const metadata = formatted.metadata as any;
-          if (metadata?.path && Array.isArray(metadata.path)) {
-            metadata.path = metadata.path.map((p: any) => ({
-              x: p.x - centerOffset.x,
-              y: p.y,
-              z: p.z - centerOffset.z,
-            }));
-          }
-          formatted.position = centerPosition(formatted.position);
-          return formatted;
-        }),
-        plains: terrainData.plains.map(f => ({
-          ...formatTerrainFeature(f),
-          position: centerPosition(f.position),
-        })),
-        waters: terrainData.waters.map(f => ({
-          ...formatTerrainFeature(f),
-          position: centerPosition(f.position),
-        })),
+        mountains: terrainData.mountains.map(f => formatTerrainFeature(f)),
+        hills: terrainData.hills.map(f => formatTerrainFeature(f)),
+        rivers: terrainData.rivers.map(f => formatTerrainFeature(f)),
+        plains: terrainData.plains.map(f => formatTerrainFeature(f)),
+        waters: terrainData.waters.map(f => formatTerrainFeature(f)),
       },
       message: `Terrain regenerated for ${cityId}`,
     });

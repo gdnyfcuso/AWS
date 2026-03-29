@@ -1861,11 +1861,11 @@ export function VirtualSpace3D({
           }
         }
 
-        console.log(`[VirtualSpace3D] Added terrain mesh:`, feature.name, `at (${feature.position.x}, ${yPos}, ${feature.position.z})`);
+        console.log(`[VirtualSpace3D] Added terrain mesh:`, feature.name, `at (${feature.position.x}, ${feature.position.y}, ${feature.position.z})`);
 
         // 添加地形特征名称标签
         if (feature.name) {
-          const labelPosition = new THREE.Vector3(feature.position.x, yPos, feature.position.z);
+          const labelPosition = new THREE.Vector3(feature.position.x, feature.position.y, feature.position.z);
           const featureHeight = feature.size.height || 0;
           const label = createTerrainLabel(feature.name, feature.type, labelPosition, featureHeight);
           terrainGroup.add(label);
