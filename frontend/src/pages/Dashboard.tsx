@@ -109,6 +109,9 @@ export function Dashboard() {
     setSelectedRegionId(regionId);
     setSelectedRegion(region);
 
+    // 清空选中的 Agent，避免使用旧城市的 Agent 获取新城市的地形
+    setSelectedAgentId(null);
+
     // 根据选择的地区类型决定行为
     if (region.type === 'city') {
       console.log('[Dashboard] City selected, will load landmarks for:', regionId);
