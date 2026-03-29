@@ -608,13 +608,60 @@ export function VirtualSpace3D({
           groundSize: groundSize.toFixed(0),
         });
       } else {
-        // 默认配置（2km范围）
-        const defaultSize = 2000;
-        cameraPos = { x: 500, y: 400, z: 500 };
-        cameraFar = 5000;
-        groundSize = defaultSize;
+        // 默认配置 - 根据地形特征计算合适的相机位置
+        let sceneCenter = { x: 0, y: 0, z: 0 };
+        let maxDimension = 2000; // 默认范围
 
-        console.log(`[VirtualSpace3D] Using default configuration (no city bounds)`);
+        if (terrainFeatures && terrainFeatures.length > 0) {
+          // 计算所有地形特征的边界
+          let minX = Infinity, maxX = -Infinity;
+          let minZ = Infinity, maxZ = -Infinity;
+
+          terrainFeatures.forEach(f => {
+            const halfWidth = (f.size?.width || 0) / 2;
+            const halfDepth = (f.size?.depth || 0) / 2;
+            minX = Math.min(minX, f.position.x - halfWidth);
+            maxX = Math.max(maxX, f.position.x + halfWidth);
+            minZ = Math.min(minZ, f.position.z - halfDepth);
+            maxZ = Math.max(maxZ, f.position.z + halfDepth);
+          });
+
+          // 地形中心
+          sceneCenter = {
+            x: (minX + maxX) / 2,
+            y: 0,
+            z: (minZ + maxZ) / 2
+          };
+
+          // 计算场景尺寸
+          const sceneWidth = maxX - minX;
+          const sceneDepth = maxZ - minZ;
+          maxDimension = Math.max(sceneWidth, sceneDepth, 1000);
+
+          console.log(`[VirtualSpace3D] Calculated terrain bounds:`, {
+            minX: minX.toFixed(0), maxX: maxX.toFixed(0),
+            minZ: minZ.toFixed(0), maxZ: maxZ.toFixed(0),
+            center: sceneCenter,
+            maxDimension: maxDimension.toFixed(0)
+          });
+        }
+
+        // 相机距离基于场景尺寸
+        const cameraDistance = maxDimension * 0.8;
+        cameraPos = {
+          x: sceneCenter.x + cameraDistance * 0.5,
+          y: cameraDistance * 0.4,
+          z: sceneCenter.z + cameraDistance * 0.5
+        };
+        cameraFar = maxDimension * 3;
+        groundSize = maxDimension * 1.5;
+
+        console.log(`[VirtualSpace3D] Using terrain-based configuration:`, {
+          sceneCenter,
+          cameraDistance: cameraDistance.toFixed(0),
+          cameraFar: cameraFar.toFixed(0),
+          groundSize: groundSize.toFixed(0)
+        });
       }
 
       // 根据城市范围动态设置雾效范围（在groundSize计算之后）
@@ -622,10 +669,37 @@ export function VirtualSpace3D({
       const fogEnd = cityBounds ? groundSize * 0.6 : 3000;
       scene.fog = new THREE.Fog(0x87CEEB, fogStart, fogEnd);
 
+      // 计算相机目标点（城市中心或地形中心）
+      let lookAtTarget = { x: 0, y: 0, z: 0 };
+      if (cityBounds && cityBounds.min && cityBounds.max) {
+        lookAtTarget = {
+          x: (cityBounds.min.x + cityBounds.max.x) / 2,
+          y: 0,
+          z: (cityBounds.min.z + cityBounds.max.z) / 2
+        };
+      } else if (terrainFeatures && terrainFeatures.length > 0) {
+        // 使用上面计算的地形中心
+        let minX = Infinity, maxX = -Infinity;
+        let minZ = Infinity, maxZ = -Infinity;
+        terrainFeatures.forEach(f => {
+          const halfWidth = (f.size?.width || 0) / 2;
+          const halfDepth = (f.size?.depth || 0) / 2;
+          minX = Math.min(minX, f.position.x - halfWidth);
+          maxX = Math.max(maxX, f.position.x + halfWidth);
+          minZ = Math.min(minZ, f.position.z - halfDepth);
+          maxZ = Math.max(maxZ, f.position.z + halfDepth);
+        });
+        lookAtTarget = {
+          x: (minX + maxX) / 2,
+          y: 0,
+          z: (minZ + maxZ) / 2
+        };
+      }
+
       // 创建相机
       const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, cameraFar);
       camera.position.set(cameraPos.x, cameraPos.y, cameraPos.z);
-      camera.lookAt(0, 0, 0);
+      camera.lookAt(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z);
       cameraRef.current = camera;
 
       // 创建渲染器
@@ -655,7 +729,7 @@ export function VirtualSpace3D({
       controls.minDistance = minDist;
       controls.maxDistance = maxDist;
       controls.maxPolarAngle = Math.PI / 2 - 0.1;
-      controls.target.set(0, 0, 0);
+      controls.target.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z);
       controlsRef.current = controls;
 
       console.log(`[VirtualSpace3D] OrbitControls: minDistance=${minDist}, maxDistance=${maxDist.toFixed(0)}`);
