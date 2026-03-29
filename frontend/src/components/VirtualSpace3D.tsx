@@ -341,8 +341,19 @@ export function VirtualSpace3D({
   // Agent 交流通道
   const communicationChannelsRef = useRef<Map<string, THREE.Line>>(new Map());
   const COMMUNICATION_RANGE = 10; // 交流范围（米）
-  // 建筑物碰撞边界框 [{ x, z, width, depth }]
-  const buildingCollidersRef = useRef<Array<{ x: number; z: number; width: number; depth: number }>>([]);
+
+  // 统一的碰撞系统
+  interface Collider {
+    type: 'building' | 'mountain' | 'hill' | 'water' | 'river' | 'vehicle';
+    x: number;
+    z: number;
+    width: number;
+    depth: number;
+    height?: number;  // 用于判断能否跳上
+    passableWithJump?: boolean;  // 是否可以跳上去
+  }
+  const collidersRef = useRef<Collider[]>([]);
+
   const [currentViewMode, setCurrentViewMode] = useState<ViewMode>('third-person');
   // 使用 ref 存储最新的视角模式，避免闭包陷阱
   const viewModeRef = useRef<ViewMode>(externalViewMode || 'third-person');
@@ -1411,16 +1422,21 @@ export function VirtualSpace3D({
     }
 
     // 清空并重建建筑物碰撞数据
-    buildingCollidersRef.current = [];
+    // 注意：建筑物碰撞数据在场景初始化时统一管理，这里只添加新的
+    // 先移除旧的建筑物碰撞体
+    collidersRef.current = collidersRef.current.filter(c => c.type !== 'building');
 
     // 添加新建筑
     buildings.forEach(building => {
       // 保存建筑物碰撞边界（用于 Agent 碰撞检测）
-      buildingCollidersRef.current.push({
+      collidersRef.current.push({
+        type: 'building',
         x: building.x,
         z: building.z,
         width: building.width,
-        depth: building.depth
+        depth: building.depth,
+        height: building.height,
+        passableWithJump: false  // 建筑物不可跳上
       });
 
       const buildingGroup = new THREE.Group();
@@ -1579,6 +1595,9 @@ export function VirtualSpace3D({
       terrainGroup.remove(child);
     }
 
+    // 清空旧的地形碰撞数据
+    collidersRef.current = collidersRef.current.filter(c => !['mountain', 'hill', 'water', 'river'].includes(c.type));
+
     // 渲染地形特征
     console.log(`[VirtualSpace3D] Starting to render ${terrainFeatures.length} terrain features`);
     terrainFeatures.forEach((feature, index) => {
@@ -1707,6 +1726,55 @@ export function VirtualSpace3D({
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         terrainGroup.add(mesh);
+
+        // 添加地形碰撞数据
+        if (feature.type === 'mountain' || feature.type === 'hill') {
+          collidersRef.current.push({
+            type: feature.type,
+            x: feature.position.x,
+            z: feature.position.z,
+            width: feature.size.width,
+            depth: feature.size.width,  // 山通常是圆形的，width=depth
+            height: feature.size.height,
+            passableWithJump: true  // 山和山丘可以跳上去
+          });
+        } else if (feature.type === 'water' || feature.type === 'river') {
+          // 水域碰撞 - 河流需要特殊处理（路径数据）
+          const metadata = feature.metadata as Record<string, unknown> | undefined;
+          const pathData = metadata?.path as Array<{ x: number; y: number; z: number }> | undefined;
+          const width = metadata?.width as number ?? feature.size.width;
+
+          if (feature.type === 'river' && pathData && pathData.length > 1) {
+            // 河流：为每段路径添加碰撞体
+            for (let i = 0; i < pathData.length - 1; i++) {
+              const midX = (pathData[i].x + pathData[i + 1].x) / 2;
+              const midZ = (pathData[i].z + pathData[i + 1].z) / 2;
+              const segmentLength = Math.sqrt(
+                Math.pow(pathData[i + 1].x - pathData[i].x, 2) +
+                Math.pow(pathData[i + 1].z - pathData[i].z, 2)
+              );
+
+              collidersRef.current.push({
+                type: 'river',
+                x: midX,
+                z: midZ,
+                width: width,
+                depth: segmentLength,
+                passableWithJump: false  // 河流不可通行
+              });
+            }
+          } else {
+            // 静止水域
+            collidersRef.current.push({
+              type: 'water',
+              x: feature.position.x,
+              z: feature.position.z,
+              width: feature.size.width,
+              depth: feature.size.depth,
+              passableWithJump: false  // 水域不可通行
+            });
+          }
+        }
 
         console.log(`[VirtualSpace3D] Added terrain mesh:`, feature.name, `at (${feature.position.x}, ${yPos}, ${feature.position.z})`);
 
@@ -1954,11 +2022,28 @@ export function VirtualSpace3D({
       vehiclesGroup.remove(child);
     }
 
+    // 清空旧的车辆碰撞数据
+    collidersRef.current = collidersRef.current.filter(c => c.type !== 'vehicle');
+
     // 渲染车辆
     vehicles.forEach(vehicle => {
       const vehicleMesh = createVehicleMesh(vehicle);
       if (vehicleMesh) {
         vehiclesGroup.add(vehicleMesh);
+
+        // 添加车辆碰撞数据
+        // 车辆尺寸估计
+        const vehicleWidth = vehicle.type === 'car' ? 4 : vehicle.type === 'bus' ? 6 : 3;
+        const vehicleDepth = vehicle.type === 'car' ? 8 : vehicle.type === 'bus' ? 12 : 6;
+
+        collidersRef.current.push({
+          type: 'vehicle',
+          x: vehicle.position.x,
+          z: vehicle.position.z,
+          width: vehicleWidth,
+          depth: vehicleDepth,
+          passableWithJump: false  // 车辆不可跳上
+        });
       }
     });
 
@@ -2428,21 +2513,36 @@ export function VirtualSpace3D({
                   }
                 }
 
-                // 2. Agent 与建筑物之间的碰撞检测
+                // 2. Agent 与环境物体之间的碰撞检测（建筑物、地形、车辆等）
                 if (!hasCollision) {
                   const agentRadius = 1.5; // Agent 的碰撞半径
-                  for (const building of buildingCollidersRef.current) {
-                    // 检测 Agent 是否与建筑物的 AABB（轴对齐包围盒）碰撞
-                    // 建筑物边界：x ± width/2, z ± depth/2
-                    const buildingMinX = building.x - building.width / 2 - agentRadius;
-                    const buildingMaxX = building.x + building.width / 2 + agentRadius;
-                    const buildingMinZ = building.z - building.depth / 2 - agentRadius;
-                    const buildingMaxZ = building.z + building.depth / 2 + agentRadius;
+                  const physics = agentPhysicsRef.current.get(agentId);
+                  const agentHeight = physics ? currentPos.y - physics.groundY : 0; // Agent 当前离地高度
 
-                    if (newX >= buildingMinX && newX <= buildingMaxX &&
-                        newZ >= buildingMinZ && newZ <= buildingMaxZ) {
+                  for (const collider of collidersRef.current) {
+                    // 检测 Agent 是否与物体的 AABB（轴对齐包围盒）碰撞
+                    // 物体边界：x ± width/2, z ± depth/2
+                    const colliderMinX = collider.x - collider.width / 2 - agentRadius;
+                    const colliderMaxX = collider.x + collider.width / 2 + agentRadius;
+                    const colliderMinZ = collider.z - collider.depth / 2 - agentRadius;
+                    const colliderMaxZ = collider.z + collider.depth / 2 + agentRadius;
+
+                    if (newX >= colliderMinX && newX <= colliderMaxX &&
+                        newZ >= colliderMinZ && newZ <= colliderMaxZ) {
+                      // 检查是否可以跳上这个物体
+                      if (collider.passableWithJump && collider.height) {
+                        // 如果 Agent 跳得够高（超过物体高度的一半），可以跳上去
+                        const JUMP_THRESHOLD = collider.height * 0.5; // 需要跳到物体高度的一半
+                        if (agentHeight > JUMP_THRESHOLD) {
+                          // 可以跳上，不阻挡
+                          console.log(`[Collision] Agent ${agentId} jumping onto ${collider.type} (height: ${agentHeight.toFixed(1)} > ${JUMP_THRESHOLD.toFixed(1)})`);
+                          continue;
+                        }
+                      }
+
+                      // 阻挡移动
                       hasCollision = true;
-                      console.log(`[Collision] Agent ${agentId} collided with building at (${building.x}, ${building.z})`);
+                      console.log(`[Collision] Agent ${agentId} blocked by ${collider.type} at (${collider.x}, ${collider.z})`);
                       break;
                     }
                   }
@@ -2511,18 +2611,30 @@ export function VirtualSpace3D({
                 }
               }
 
-              // 2. Agent 与建筑物之间的碰撞检测
+              // 2. Agent 与环境物体之间的碰撞检测（建筑物、地形、车辆等）
               if (!hasCollision) {
                 const agentRadius = 1.5; // Agent 的碰撞半径
-                for (const building of buildingCollidersRef.current) {
-                  // 检测 Agent 是否与建筑物的 AABB（轴对齐包围盒）碰撞
-                  const buildingMinX = building.x - building.width / 2 - agentRadius;
-                  const buildingMaxX = building.x + building.width / 2 + agentRadius;
-                  const buildingMinZ = building.z - building.depth / 2 - agentRadius;
-                  const buildingMaxZ = building.z + building.depth / 2 + agentRadius;
+                const physics = agentPhysicsRef.current.get(agentId);
+                const agentHeight = physics ? currentPos.y - physics.groundY : 0;
 
-                  if (newX >= buildingMinX && newX <= buildingMaxX &&
-                      newZ >= buildingMinZ && newZ <= buildingMaxZ) {
+                for (const collider of collidersRef.current) {
+                  // 检测 Agent 是否与物体的 AABB（轴对齐包围盒）碰撞
+                  const colliderMinX = collider.x - collider.width / 2 - agentRadius;
+                  const colliderMaxX = collider.x + collider.width / 2 + agentRadius;
+                  const colliderMinZ = collider.z - collider.depth / 2 - agentRadius;
+                  const colliderMaxZ = collider.z + collider.depth / 2 + agentRadius;
+
+                  if (newX >= colliderMinX && newX <= colliderMaxX &&
+                      newZ >= colliderMinZ && newZ <= colliderMaxZ) {
+                    // 检查是否可以跳上这个物体
+                    if (collider.passableWithJump && collider.height) {
+                      const JUMP_THRESHOLD = collider.height * 0.5;
+                      if (agentHeight > JUMP_THRESHOLD) {
+                        continue; // 可以跳上
+                      }
+                    }
+
+                    // 阻挡移动
                     hasCollision = true;
                     // 停止移动这个 Agent
                     agentTargetPositionsRef.current.set(agentId, {
