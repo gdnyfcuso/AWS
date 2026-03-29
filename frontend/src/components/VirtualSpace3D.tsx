@@ -341,6 +341,8 @@ export function VirtualSpace3D({
   // Agent 交流通道
   const communicationChannelsRef = useRef<Map<string, THREE.Line>>(new Map());
   const COMMUNICATION_RANGE = 10; // 交流范围（米）
+  // 建筑物碰撞边界框 [{ x, z, width, depth }]
+  const buildingCollidersRef = useRef<Array<{ x: number; z: number; width: number; depth: number }>>([]);
   const [currentViewMode, setCurrentViewMode] = useState<ViewMode>('third-person');
   // 使用 ref 存储最新的视角模式，避免闭包陷阱
   const viewModeRef = useRef<ViewMode>(externalViewMode || 'third-person');
@@ -1408,8 +1410,19 @@ export function VirtualSpace3D({
       buildingsGroup.remove(child);
     }
 
+    // 清空并重建建筑物碰撞数据
+    buildingCollidersRef.current = [];
+
     // 添加新建筑
     buildings.forEach(building => {
+      // 保存建筑物碰撞边界（用于 Agent 碰撞检测）
+      buildingCollidersRef.current.push({
+        x: building.x,
+        z: building.z,
+        width: building.width,
+        depth: building.depth
+      });
+
       const buildingGroup = new THREE.Group();
       // 建筑物位置：y + height/2 使建筑物底部在 y 上
       buildingGroup.position.set(building.x, building.y + building.height / 2, building.z);
@@ -2396,6 +2409,7 @@ export function VirtualSpace3D({
                 const collisionRadius = 3.5;
                 let hasCollision = false;
 
+                // 1. Agent 之间的碰撞检测
                 if (agentMeshesRef.current) {
                   for (const otherAgent of agentMeshesRef.current.children) {
                     if (otherAgent instanceof THREE.Group && otherAgent.userData.agentId !== agentId) {
@@ -2407,9 +2421,29 @@ export function VirtualSpace3D({
 
                       if (distToOther < collisionRadius) {
                         hasCollision = true;
-                        console.log(`[Collision] Agent ${agentId} collision detected`);
+                        console.log(`[Collision] Agent ${agentId} collided with another agent`);
                         break;
                       }
+                    }
+                  }
+                }
+
+                // 2. Agent 与建筑物之间的碰撞检测
+                if (!hasCollision) {
+                  const agentRadius = 1.5; // Agent 的碰撞半径
+                  for (const building of buildingCollidersRef.current) {
+                    // 检测 Agent 是否与建筑物的 AABB（轴对齐包围盒）碰撞
+                    // 建筑物边界：x ± width/2, z ± depth/2
+                    const buildingMinX = building.x - building.width / 2 - agentRadius;
+                    const buildingMaxX = building.x + building.width / 2 + agentRadius;
+                    const buildingMinZ = building.z - building.depth / 2 - agentRadius;
+                    const buildingMaxZ = building.z + building.depth / 2 + agentRadius;
+
+                    if (newX >= buildingMinX && newX <= buildingMaxX &&
+                        newZ >= buildingMinZ && newZ <= buildingMaxZ) {
+                      hasCollision = true;
+                      console.log(`[Collision] Agent ${agentId} collided with building at (${building.x}, ${building.z})`);
+                      break;
                     }
                   }
                 }
@@ -2453,6 +2487,7 @@ export function VirtualSpace3D({
               const collisionRadius = 3.5;
               let hasCollision = false;
 
+              // 1. Agent 之间的碰撞检测
               if (agentMeshesRef.current) {
                 for (const otherAgent of agentMeshesRef.current.children) {
                   if (otherAgent instanceof THREE.Group && otherAgent.userData.agentId !== agentId) {
@@ -2472,6 +2507,30 @@ export function VirtualSpace3D({
                       });
                       break;
                     }
+                  }
+                }
+              }
+
+              // 2. Agent 与建筑物之间的碰撞检测
+              if (!hasCollision) {
+                const agentRadius = 1.5; // Agent 的碰撞半径
+                for (const building of buildingCollidersRef.current) {
+                  // 检测 Agent 是否与建筑物的 AABB（轴对齐包围盒）碰撞
+                  const buildingMinX = building.x - building.width / 2 - agentRadius;
+                  const buildingMaxX = building.x + building.width / 2 + agentRadius;
+                  const buildingMinZ = building.z - building.depth / 2 - agentRadius;
+                  const buildingMaxZ = building.z + building.depth / 2 + agentRadius;
+
+                  if (newX >= buildingMinX && newX <= buildingMaxX &&
+                      newZ >= buildingMinZ && newZ <= buildingMaxZ) {
+                    hasCollision = true;
+                    // 停止移动这个 Agent
+                    agentTargetPositionsRef.current.set(agentId, {
+                      x: currentPos.x,
+                      y: currentPos.y,
+                      z: currentPos.z
+                    });
+                    break;
                   }
                 }
               }
