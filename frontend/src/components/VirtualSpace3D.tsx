@@ -1787,14 +1787,17 @@ export function VirtualSpace3D({
 
       if (mesh) {
         // 设置地形特征的位置
-        // 山和山丘：使用原始 position.y 作为基础海拔
-        // 河流和水面：使用略微负值使其嵌入地面
-        let yPos = feature.position.y;
+        // 山和山丘：贴合地面放置（y=0），而不是使用数据库中的海拔高度
+        // 河流和水面：略微嵌入地下
+        let yPos = 0; // 默认贴合地面
         if (feature.type === 'water' || feature.type === 'river') {
           // 河流和水面略微低于地面
           yPos = -0.1;
+        } else if (feature.type === 'mountain' || feature.type === 'hill') {
+          // 山和山丘贴合地面，底部在 y=0
+          // 山脉模型的底部会在 ground 上
+          yPos = 0;
         }
-        // 对于山脉和山丘，保留后端设置的基础海拔
         mesh.position.set(feature.position.x, yPos, feature.position.z);
         mesh.name = feature.name || `Terrain_${feature.id}`;
         mesh.castShadow = true;
