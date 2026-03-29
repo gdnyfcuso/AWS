@@ -1656,13 +1656,27 @@ export function VirtualSpace3D({
 
     console.log(`[VirtualSpace3D] Rendering terrain with ${terrainFeatures.length} features`);
 
-    // 清空现有地形
+    // 清空现有地形（包括所有子对象）
     while (terrainGroup.children.length > 0) {
       const child = terrainGroup.children[0];
-      if (child instanceof THREE.Mesh) {
-        child.geometry.dispose();
+      // 递归清理 Group 中的所有对象
+      if (child instanceof THREE.Group) {
+        child.traverse((obj) => {
+          if (obj instanceof THREE.Mesh) {
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material instanceof THREE.Material) {
+              obj.material.dispose();
+            } else if (Array.isArray(obj.material)) {
+              obj.material.forEach(mat => mat.dispose());
+            }
+          }
+        });
+      } else if (child instanceof THREE.Mesh) {
+        if (child.geometry) child.geometry.dispose();
         if (child.material instanceof THREE.Material) {
           child.material.dispose();
+        } else if (Array.isArray(child.material)) {
+          child.material.forEach(mat => mat.dispose());
         }
       }
       terrainGroup.remove(child);
@@ -1786,18 +1800,13 @@ export function VirtualSpace3D({
 
       if (mesh) {
         // 设置地形特征的位置
-        // 山和山丘：贴合地面放置（y=0），而不是使用数据库中的海拔高度
-        // 河流和水面：略微嵌入地下
-        let yPos = 0; // 默认贴合地面
-        if (feature.type === 'water' || feature.type === 'river') {
-          // 河流和水面略微低于地面
-          yPos = -0.1;
-        } else if (feature.type === 'mountain' || feature.type === 'hill') {
-          // 山和山丘贴合地面，底部在 y=0
-          // 山脉模型的底部会在 ground 上
-          yPos = 0;
+        // 对于河流（riverGroup），内部段已经使用绝对坐标定位，不需要再设置 group 位置
+        // 对于其他类型，需要设置位置
+        if (feature.type !== 'river' && feature.type !== 'water') {
+          // 山和山丘：贴合地面放置（y=0）
+          mesh.position.set(feature.position.x, 0, feature.position.z);
         }
-        mesh.position.set(feature.position.x, yPos, feature.position.z);
+        // 河流和水面：riverGroup 内部已经设置了位置和深度（y=-0.5）
         mesh.name = feature.name || `Terrain_${feature.id}`;
         mesh.castShadow = true;
         mesh.receiveShadow = true;
