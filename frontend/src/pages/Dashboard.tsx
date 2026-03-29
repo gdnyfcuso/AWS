@@ -13,7 +13,7 @@ import { useWorldMap } from '../hooks/useWorldMap';
 import { useAgentRelationships } from '../hooks/useAgentRelationships';
 import { useRealWorldAgents } from '../hooks/useRealWorldAgents';
 import { useTerrainData } from '../hooks/useTerrainData';
-import { useCityTerrainByAgent } from '../hooks/useCityTerrain';
+import { useCityTerrainByAgent, useCityTerrainByName } from '../hooks/useCityTerrain';
 import { useRoadNetwork } from '../hooks/useRoadNetwork';
 import { useVehicles } from '../hooks/useVehicles';
 import { useMobileDetection, useResponsiveClasses } from '../hooks/useMobileDetection';
@@ -54,12 +54,22 @@ export function Dashboard() {
   const { landmarks: regionLandmarks, loading: landmarksLoading } = useRegionLandmarks(selectedRegionId);
 
   // 3D虚拟空间数据 - 使用城市级地形加载（1:1比例）
-  // 优先使用选中 Agent 的城市，如果没有选中则使用第一个 Agent
-  const terrainAgentId = selectedAgentId || geographicAgents[0]?.agent_id || null;
-  const { data: cityTerrainData, loading: cityTerrainLoading } = useCityTerrainByAgent(terrainAgentId, {
-    enabled: !!terrainAgentId,
+  // 优先使用选中的城市名称来获取地形，其次使用选中的 Agent
+  const { data: cityTerrainByName, loading: cityByNameLoading } = useCityTerrainByName(selectedRegionId, {
+    enabled: !!selectedRegionId,
     refreshInterval: 30000,
   });
+
+  // 备用：使用 Agent ID 获取地形
+  const terrainAgentId = selectedAgentId || geographicAgents[0]?.agent_id || null;
+  const { data: cityTerrainByAgent, loading: cityByAgentLoading } = useCityTerrainByAgent(terrainAgentId, {
+    enabled: !selectedRegionId && !!terrainAgentId,
+    refreshInterval: 30000,
+  });
+
+  // 选择使用哪个数据源
+  const cityTerrainData = selectedRegionId ? cityTerrainByName : cityTerrainByAgent;
+  const cityTerrainLoading = selectedRegionId ? cityByNameLoading : cityByAgentLoading;
 
   // 回退到默认地形数据
   const { data: defaultTerrainData } = useTerrainData(!cityTerrainData.city && !cityTerrainLoading);
