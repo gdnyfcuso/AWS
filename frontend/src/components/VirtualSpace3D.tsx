@@ -664,10 +664,9 @@ export function VirtualSpace3D({
         });
       }
 
-      // 根据城市范围动态设置雾效范围（在groundSize计算之后）
-      const fogStart = cityBounds ? groundSize * 0.1 : 500;
-      const fogEnd = cityBounds ? groundSize * 0.6 : 3000;
-      scene.fog = new THREE.Fog(0x87CEEB, fogStart, fogEnd);
+      // 禁用雾效，保持视野清晰
+      // scene.fog = new THREE.Fog(0x87CEEB, fogStart, fogEnd);
+      scene.fog = null;
 
       // 计算相机目标点（城市中心或地形中心）
       let lookAtTarget = { x: 0, y: 0, z: 0 };
